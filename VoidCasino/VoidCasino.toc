@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: |cff9d4eddVoid|rCasino
+## Notes: Modular casino hub with unified bankroll, 1-hour refill lockout, and guild leaderboards.
+## Author: null
+## Version: 2.2.0
+## SavedVariablesPerCharacter: VoidCasinoDB
+
+Core.lua
+Cards.lua
+Hub.lua
+Games\Crash.lua
+Games\Blackjack.lua
