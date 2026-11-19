@@ -27,6 +27,7 @@ local activeBet = 0
 local queuedBet = false
 local cashedOut = false
 local cashoutMult = 0
+local cashoutProfit = 0
 local autoCashoutEnabled = false
 local autoBetEnabled = false
 
@@ -72,10 +73,13 @@ end
 
 local function TriggerCashout(targetMult)
     if activeBet <= 0 or cashedOut then return end
+    local mult = targetMult or currentMultiplier
+    if mult < 1.01 then return end
     cashedOut = true
-    cashoutMult = targetMult or currentMultiplier
-    local payout = math.floor(activeBet * cashoutMult * 100) / 100
+    cashoutMult = mult
+    local payout = math.floor(activeBet * cashoutMult * 100 + 1e-6) / 100
     local netWin = math.floor((payout - activeBet) * 100 + 0.5) / 100
+    cashoutProfit = netWin
 
     ns.AddCredits(payout)
     LogCrashPersonal(true, activeBet, cashoutMult, netWin)
@@ -86,12 +90,14 @@ local function TriggerCashout(targetMult)
 end
 
 local function LockInBet()
+    if BetInput then BetInput:ClearFocus() end
     local ok, actual = ns.DeductCredits(BetInput:GetText())
     if not ok then return false end
     BetInput:SetText(string.format("%.2f", actual))
     activeBet = actual
     cashedOut = false
     cashoutMult = 0
+    cashoutProfit = 0
     queuedBet = false
     ns.RefreshHub()
     return true
@@ -129,6 +135,7 @@ local function CrashRound()
     local lostBet = (activeBet > 0 and not cashedOut) and activeBet or 0
     activeBet = 0
     cashedOut = false
+    cashoutProfit = 0
 
     table.insert(ns.db.crashHistory, 1, crashPoint)
     while #ns.db.crashHistory > 15 do
@@ -263,7 +270,7 @@ local function OnUpdateTick(self, elapsed)
         BigMultText:SetTextColor(1, 1, 1, 1)
         BigMultText:SetText(string.format("%.2fx", currentMultiplier))
         if cashedOut then
-            SubStatusText:SetText(string.format("|cff9d4eddCASHED OUT @ %.2fx (+%.2f)|r", cashoutMult, activeBet * (cashoutMult - 1)))
+            SubStatusText:SetText(string.format("|cff9d4eddCASHED OUT @ %.2fx (+%.2f)|r", cashoutMult, cashoutProfit))
         elseif activeBet > 0 then
             SubStatusText:SetText(string.format("|cffd8b4fePayout: %.2f Credits|r", activeBet * currentMultiplier))
         else
@@ -271,7 +278,11 @@ local function OnUpdateTick(self, elapsed)
         end
 
         if activeBet > 0 and not cashedOut then
-            MainActionText:SetText(string.format("Cash Out (%.2f)", activeBet * currentMultiplier))
+            if currentMultiplier < 1.01 then
+                MainActionText:SetText("Cash Out (1.01x+)")
+            else
+                MainActionText:SetText(string.format("Cash Out (%.2f)", activeBet * currentMultiplier))
+            end
         end
 
         UpdateGraphVisuals(stateTimer, false)
@@ -293,7 +304,7 @@ end
 -- Module Interface Methods
 -- ============================================================================
 function Crash:IsBusy()
-    return activeBet > 0
+    return activeBet > 0 and not cashedOut
 end
 
 function Crash:Refresh()
@@ -340,7 +351,11 @@ function Crash:Refresh()
         if activeBet > 0 and not cashedOut then
             MainActionBtn.customCol = {0.62, 0.31, 0.87, 1}
             MainActionBtn.bgTex:SetColorTexture(0.62, 0.31, 0.87, 1)
-            MainActionText:SetText(string.format("Cash Out (%.2f)", activeBet * currentMultiplier))
+            if currentMultiplier < 1.01 then
+                MainActionText:SetText("Cash Out (1.01x+)")
+            else
+                MainActionText:SetText(string.format("Cash Out (%.2f)", activeBet * currentMultiplier))
+            end
         elseif queuedBet then
             MainActionBtn.customCol = {0.32, 0.15, 0.48, 1}
             MainActionBtn.bgTex:SetColorTexture(0.32, 0.15, 0.48, 1)
@@ -354,7 +369,7 @@ function Crash:Refresh()
         if activeBet > 0 then
             MainActionBtn.customCol = {0.32, 0.15, 0.48, 1}
             MainActionBtn.bgTex:SetColorTexture(0.32, 0.15, 0.48, 1)
-            MainActionText:SetText(string.format("Bet Locked (%.0f)", activeBet))
+            MainActionText:SetText(string.format("Bet Locked (%.2f)", activeBet))
         else
             MainActionBtn.customCol = COLORS.purpleBtn
             MainActionBtn.bgTex:SetColorTexture(unpack(COLORS.purpleBtn))
@@ -448,22 +463,38 @@ function Crash:Build(parent)
     BtnMax:SetPoint("RIGHT", -3, 0)
     BtnMax:SetScript("OnClick", function()
         ns.CheckBankrollRefill()
-        BetInput:SetText(string.format("%.2f", math.max(0, ns.db.credits)))
+        local bal = (ns.db and ns.db.credits) or 0
+        BetInput:SetText(string.format("%.2f", math.max(0, bal)))
     end)
 
     local Btn2x = ns.CreateCustomButton(BetBox, 32, 24, "2x", false)
     Btn2x:SetPoint("RIGHT", BtnMax, "LEFT", -3, 0)
     Btn2x:SetScript("OnClick", function()
         local cur = tonumber(BetInput:GetText()) or 0
-        local nextVal = math.min(ns.db.credits, cur * 2)
-        BetInput:SetText(string.format("%.2f", math.max(1, nextVal)))
+        local bal = (ns.db and ns.db.credits) or 0
+        local nextVal = math.min(bal, cur * 2)
+        if bal >= 1 then
+            nextVal = math.max(1, nextVal)
+        else
+            nextVal = math.max(0, math.floor(nextVal * 100 + 1e-6) / 100)
+        end
+        BetInput:SetText(string.format("%.2f", nextVal))
     end)
 
     local BtnHalf = ns.CreateCustomButton(BetBox, 32, 24, "1/2", false)
     BtnHalf:SetPoint("RIGHT", Btn2x, "LEFT", -3, 0)
     BtnHalf:SetScript("OnClick", function()
         local cur = tonumber(BetInput:GetText()) or 0
-        BetInput:SetText(string.format("%.2f", math.max(1, math.floor((cur / 2) * 100) / 100)))
+        local bal = (ns.db and ns.db.credits) or 0
+        local nextVal = math.floor((cur / 2) * 100 + 1e-6) / 100
+        if bal >= 1 then
+            nextVal = math.max(1, nextVal)
+        elseif bal > 0 then
+            nextVal = math.max(0.01, math.min(bal, nextVal))
+        else
+            nextVal = 0
+        end
+        BetInput:SetText(string.format("%.2f", nextVal))
     end)
 
     local coContainer = ns.CreateToggleSwitch(LeftPanel, "Cash Out At (x)", function(val)
@@ -500,10 +531,14 @@ function Crash:Build(parent)
         row:SetSize(206, 26)
         row:SetPoint("TOPLEFT", 12, -176 - (i * 30))
         ns.StyleBox(row, COLORS.purpleDim, nil)
-        row.left = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        row.left:SetPoint("LEFT", 8, 0)
         row.right = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.right:SetPoint("RIGHT", -8, 0)
+        row.right:SetJustifyH("RIGHT")
+        row.left = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.left:SetPoint("LEFT", 8, 0)
+        row.left:SetPoint("RIGHT", row.right, "LEFT", -4, 0)
+        row.left:SetJustifyH("LEFT")
+        row.left:SetWordWrap(false)
         row:Hide()
         PersonalRows[i] = row
     end

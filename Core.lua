@@ -145,6 +145,7 @@ local guildRosterCache = {}
 local guildFormattedNameMap = {}
 local sentRoundHashes = {}
 local lastSyncRequestTime = 0
+local lastSyncReplyTime = 0
 
 -- ============================================================================
 -- Deterministic 32-Bit PRNG & Hash Mixer (Pure Lua 5.1)
@@ -539,8 +540,9 @@ end
 
 function ns.CheckBankrollRefill()
     local db = ns.db
-    if not db then return end
+    if not db then return false end
     local now = GetServerTime()
+    local refilled = false
 
     if db.credits < 0.01 and not ns.HasActiveWager() then
         if not db.emptyTimestamp or db.emptyTimestamp == 0 then
@@ -550,6 +552,7 @@ function ns.CheckBankrollRefill()
             if elapsed >= ns.REFILL_COOLDOWN then
                 db.credits = ns.STARTING_CREDITS
                 db.emptyTimestamp = 0
+                refilled = true
                 DEFAULT_CHAT_FRAME:AddMessage("|cff9d4edd[VoidCasino]|r 1-hour lockout expired! Bankroll automatically refilled to |cffd8b4fe1,000.00|r credits.")
                 ns.BroadcastLiveBalance()
             end
@@ -557,16 +560,19 @@ function ns.CheckBankrollRefill()
     else
         db.emptyTimestamp = 0
     end
+    return refilled
 end
 
 function ns.DeductCredits(amount)
     ns.CheckBankrollRefill()
     local db = ns.db
     if not db then return false, 0 end
-    local req = math.floor((tonumber(amount) or 0) * 100) / 100
+    local rawAmt = tonumber(amount) or 0
+    if rawAmt ~= rawAmt or rawAmt == math.huge or rawAmt <= 0 then return false, 0 end
+    local req = math.floor(rawAmt * 100 + 1e-6) / 100
     if req <= 0 then return false, 0 end
     if req > db.credits then
-        req = math.floor(db.credits * 100) / 100
+        req = math.floor(db.credits * 100 + 1e-6) / 100
     end
     if req < 0.01 then
         DEFAULT_CHAT_FRAME:AddMessage("|cffe63946[VoidCasino]|r Balance is 0.00! Wait for the 1-hour auto-refill timer to restore your 1,000 credits.")
@@ -579,7 +585,9 @@ end
 function ns.AddCredits(amount)
     local db = ns.db
     if not db then return end
-    local add = math.floor((tonumber(amount) or 0) * 100) / 100
+    local rawAmt = tonumber(amount) or 0
+    if rawAmt ~= rawAmt or rawAmt == math.huge or rawAmt <= 0 then return end
+    local add = math.floor(rawAmt * 100 + 1e-6) / 100
     if add <= 0 then return end
     db.credits = math.floor((db.credits + add) * 100 + 0.5) / 100
     if db.credits > (db.peakBalance or 0) then
@@ -721,7 +729,11 @@ local function HandleIncomingGuildPacket(prefix, message, channel, sender)
     local cmd, rest = string.match(message, "^([^:]+):?(.*)$")
 
     if cmd == "SYNC_REQ" then
-        ns.BroadcastMyBestRecords()
+        local now = GetTime()
+        if (now - lastSyncReplyTime) >= 2.0 then
+            lastSyncReplyTime = now
+            ns.BroadcastMyBestRecords()
+        end
 
     elseif cmd == "BAL" then
         local liveStr, peakStr, customDisplay = string.match(rest, "^([^:]+):([^:]+):?(.*)$")
@@ -736,10 +748,10 @@ local function HandleIncomingGuildPacket(prefix, message, channel, sender)
     elseif cmd == "SYNC_REP" then
         -- Support 5-game format (with Hi-Lo) and legacy 4-game fallback
         local liveStr, peakStr, cPair, bPair, rPair, pPair, hPair, customDisplay =
-            string.match(rest, "^([^:]+):([^:]+):([^:]+):([^:]+):([^:]+):([^:]+):([^:]+):?(.*)$")
+            string.match(rest, "^([^:]+):([^:]+):([^:,]+,[^:]+):([^:,]+,[^:]+):([^:,]+,[^:]+):([^:,]+,[^:]+):([^:,]+,[^:]+):?(.*)$")
         if not liveStr then
             liveStr, peakStr, cPair, bPair, rPair, pPair, customDisplay =
-                string.match(rest, "^([^:]+):([^:]+):([^:]+):([^:]+):([^:]+):([^:]+):?(.*)$")
+                string.match(rest, "^([^:]+):([^:]+):([^:,]+,[^:]+):([^:,]+,[^:]+):([^:,]+,[^:]+):([^:,]+,[^:]+):?(.*)$")
             hPair = nil
         end
         if not liveStr then return end

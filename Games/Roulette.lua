@@ -218,7 +218,9 @@ local function GetSpotReturnMultiplier(spotId, winNum)
 end
 
 local function FormatCompactChip(amount)
-    if amount >= 1000 then
+    if amount >= 10000 then
+        return string.format("%.0fk", amount / 1000)
+    elseif amount >= 1000 then
         return string.format("%.1fk", amount / 1000)
     elseif math.abs(amount - math.floor(amount + 0.5)) < 0.005 then
         return string.format("%d", math.floor(amount + 0.5))
@@ -246,7 +248,7 @@ end
 
 local function GetChipValue()
     local val = tonumber(UI.ChipInput and UI.ChipInput:GetText()) or 0
-    val = math.floor(val * 100) / 100
+    val = math.floor(val * 100 + 1e-6) / 100
     if val < 0.01 then return 0 end
     return val
 end
@@ -728,7 +730,12 @@ local function ExecuteSpin()
     end
 
     local ok, actualBet = ns.DeductCredits(totalWager)
-    if not ok or actualBet < totalWager - 0.01 then return end
+    if not ok then return end
+    if actualBet < totalWager - 0.005 then
+        ns.AddCredits(actualBet)
+        return
+    end
+    StopConfetti()
 
     local betSnapshot = CopyBetTable(ST.stagedBets)
     ST.lastRoundBets = CopyBetTable(ST.stagedBets)
@@ -1038,7 +1045,7 @@ function Roulette:Build(parent)
     UI.BtnMax:SetScript("OnClick", function()
         ns.CheckBankrollRefill()
         local bal = (ns.db and ns.db.credits) or 0
-        local rem = math.max(0, math.floor((bal - GetTotalStagedBet()) * 100) / 100)
+        local rem = math.max(0, math.floor((bal - GetTotalStagedBet()) * 100 + 1e-6) / 100)
         UI.ChipInput:SetText(string.format("%.2f", rem))
         UpdateTableVisuals()
     end)
@@ -1052,7 +1059,7 @@ function Roulette:Build(parent)
         if bal >= 1 then
             nextVal = math.max(1, nextVal)
         else
-            nextVal = math.max(0, math.floor(nextVal * 100) / 100)
+            nextVal = math.max(0, math.floor(nextVal * 100 + 1e-6) / 100)
         end
         UI.ChipInput:SetText(string.format("%.2f", nextVal))
         UpdateTableVisuals()
@@ -1063,11 +1070,13 @@ function Roulette:Build(parent)
     UI.BtnHalf:SetScript("OnClick", function()
         local cur = tonumber(UI.ChipInput:GetText()) or 0
         local bal = (ns.db and ns.db.credits) or 0
-        local nextVal = math.floor((cur / 2) * 100) / 100
+        local nextVal = math.floor((cur / 2) * 100 + 1e-6) / 100
         if bal >= 1 then
             nextVal = math.max(1, nextVal)
-        else
+        elseif bal > 0 then
             nextVal = math.max(0.01, math.min(bal, nextVal))
+        else
+            nextVal = 0
         end
         UI.ChipInput:SetText(string.format("%.2f", nextVal))
         UpdateTableVisuals()
@@ -1184,6 +1193,18 @@ function Roulette:Build(parent)
     UI.RebetBtn.label:SetFontObject("GameFontHighlightSmall")
     UI.RebetBtn:SetScript("OnClick", function()
         if ST.state == "SPINNING" or next(ST.lastRoundBets) == nil then return end
+        local lastTotal = 0
+        for _, amt in pairs(ST.lastRoundBets) do
+            lastTotal = lastTotal + (amt or 0)
+        end
+        lastTotal = math.floor(lastTotal * 100 + 0.5) / 100
+        ns.CheckBankrollRefill()
+        local bal = (ns.db and ns.db.credits) or 0
+        if bal + 0.001 < lastTotal then
+            ST.statusBannerText = "|cffe63946Insufficient credits to rebet|r"
+            if UI.SubStatusText then UI.SubStatusText:SetText(ST.statusBannerText) end
+            return
+        end
         ST.stagedBets = CopyBetTable(ST.lastRoundBets)
         Roulette:Refresh()
     end)

@@ -138,6 +138,9 @@ function ns.RefreshClanDrawer()
         end
         local isMultRanked = (activeDrawerTab == "CRASH" or activeDrawerTab == "HILO")
         table.sort(sorted, function(a, b)
+            if a.mult == b.mult and a.payout == b.payout then
+                return a.name < b.name
+            end
             if isMultRanked then
                 if a.mult == b.mult then return a.payout > b.payout end
                 return a.mult > b.mult
@@ -190,6 +193,17 @@ function ns.RefreshClanDrawer()
     end
 end
 
+local function UpdateLockoutText()
+    local db = ns.db
+    if not LockoutText or not db then return end
+    if db.emptyTimestamp and db.emptyTimestamp > 0 and db.credits < 0.01 and not ns.HasActiveWager() then
+        local rem = ns.REFILL_COOLDOWN - (GetServerTime() - db.emptyTimestamp)
+        LockoutText:SetText("|cffe63946Refill in " .. ns.FormatClock(rem) .. "|r")
+    else
+        LockoutText:SetText("|cff888899Refill: Auto @ 0.00 (1h)|r")
+    end
+end
+
 function ns.RefreshHub()
     if not MainFrame or not ns.db then return end
     local db = ns.db
@@ -207,12 +221,7 @@ function ns.RefreshHub()
         ProfitText:SetText(string.format("P/L: |cffe63946%.2f|r (W:%d/L:%d)  |  Peak: %s", p, db.wins or 0, db.losses or 0, peakStr))
     end
 
-    if db.emptyTimestamp and db.emptyTimestamp > 0 and db.credits < 0.01 and not ns.HasActiveWager() then
-        local rem = ns.REFILL_COOLDOWN - (GetServerTime() - db.emptyTimestamp)
-        LockoutText:SetText("|cffe63946Refill in " .. ns.FormatClock(rem) .. "|r")
-    else
-        LockoutText:SetText("|cff888899Refill: Auto @ 0.00 (1h)|r")
-    end
+    UpdateLockoutText()
 
     -- Shared Bottom Round Log (Always "First L.")
     local myDisplay = ns.GetMyFormattedName()
@@ -312,6 +321,7 @@ function ns.BuildHub()
     MainFrame:SetSize(820, 600)
     MainFrame:SetPoint("CENTER")
     MainFrame:SetMovable(true)
+    MainFrame:SetClampedToScreen(true)
     MainFrame:EnableMouse(true)
     MainFrame:RegisterForDrag("LeftButton")
     MainFrame:SetScript("OnDragStart", MainFrame.StartMoving)
@@ -546,8 +556,11 @@ function ns.BuildHub()
         hubTickAccumulator = hubTickAccumulator + elapsed
         if hubTickAccumulator >= 1.0 then
             hubTickAccumulator = 0
-            ns.CheckBankrollRefill()
-            ns.RefreshHub()
+            if ns.CheckBankrollRefill() then
+                ns.RefreshHub()
+            else
+                UpdateLockoutText()
+            end
         end
     end)
 

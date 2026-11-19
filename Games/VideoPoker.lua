@@ -188,9 +188,9 @@ end
 -- Visual Updates (Paytable, Cards, Hold Buttons)
 -- ============================================================================
 local function UpdatePaytableVisuals()
-    local refBet = (ST.state == "IDLE")
-        and (tonumber(UI.BetInput and UI.BetInput:GetText()) or 0)
-        or ST.activeBet
+    local refBet = (ST.state == "PLAYER_HOLD")
+        and ST.activeBet
+        or (tonumber(UI.BetInput and UI.BetInput:GetText()) or 0)
     if refBet < 0 then refBet = 0 end
 
     for _, tier in ipairs(CFG.PAYTABLE) do
@@ -511,7 +511,7 @@ function VideoPoker:Build(parent)
         if bal >= 1 then
             nextVal = math.max(1, nextVal)
         else
-            nextVal = math.max(0, math.floor(nextVal * 100) / 100)
+            nextVal = math.max(0, math.floor(nextVal * 100 + 1e-6) / 100)
         end
         UI.BetInput:SetText(string.format("%.2f", nextVal))
         UpdatePaytableVisuals()
@@ -522,11 +522,13 @@ function VideoPoker:Build(parent)
     UI.BtnHalf:SetScript("OnClick", function()
         local cur     = tonumber(UI.BetInput:GetText()) or 0
         local bal     = (ns.db and ns.db.credits) or 0
-        local nextVal = math.floor((cur / 2) * 100) / 100
+        local nextVal = math.floor((cur / 2) * 100 + 1e-6) / 100
         if bal >= 1 then
             nextVal = math.max(1, nextVal)
-        else
+        elseif bal > 0 then
             nextVal = math.max(0.01, math.min(bal, nextVal))
+        else
+            nextVal = 0
         end
         UI.BetInput:SetText(string.format("%.2f", nextVal))
         UpdatePaytableVisuals()

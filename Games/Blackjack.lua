@@ -60,7 +60,7 @@ local function SetButtonEnabled(btn, enabled)
     end
 end
 
-local function FormatHandValue(hand, hideHole)
+local function FormatHandValue(hand, hideHole, isSplit)
     if #hand == 0 then return "" end
     if hideHole and #hand >= 1 then
         local upVal = Cards.GetBlackjackValue(hand[1].rank)
@@ -69,7 +69,7 @@ local function FormatHandValue(hand, hideHole)
     local total, isSoft, isBJ, isBust = Cards.EvaluateBlackjackHand(hand)
     if isBust then
         return "|cffe63946BUST (" .. total .. ")|r"
-    elseif isBJ then
+    elseif isBJ and not isSplit then
         return "|cffd8b4feBLACKJACK|r"
     elseif isSoft and total < 21 then
         return "Soft " .. total
@@ -192,7 +192,7 @@ local function RenderTable()
             lbl:ClearAllPoints()
             lbl:SetPoint("CENTER", TableFrame, "BOTTOMLEFT", cx, 18)
             local activeTag = (state == "PLAYER_TURN" and activeHandIdx == idx) and "|cff9d4edd>|r " or ""
-            lbl:SetText(string.format("%sH%d: %s |cff888899(%.0f)|r", activeTag, idx, FormatHandValue(h.cards, false), h.bet))
+            lbl:SetText(string.format("%sH%d: %s |cff888899(%.0f)|r", activeTag, idx, FormatHandValue(h.cards, false, h.isSplit), h.bet))
             lbl:Show()
         end
     end
@@ -220,7 +220,7 @@ local function SettleRound()
             table.insert(summaryParts, "BUST")
         elseif isTrueBJ and not dBJ then
             hand.outcome = "BJ"
-            local payout = math.floor(hand.bet * 2.5 * 100) / 100
+            local payout = math.floor(hand.bet * 2.5 * 100 + 1e-6) / 100
             totalReturned = totalReturned + payout
             table.insert(summaryParts, "BLACKJACK")
         elseif dBJ and not isTrueBJ then
@@ -232,7 +232,7 @@ local function SettleRound()
             table.insert(summaryParts, "PUSH")
         elseif dBust or pTotal > dTotal then
             hand.outcome = "WIN"
-            local payout = math.floor(hand.bet * 2.0 * 100) / 100
+            local payout = math.floor(hand.bet * 2.0 * 100 + 1e-6) / 100
             totalReturned = totalReturned + payout
             table.insert(summaryParts, "WIN")
         elseif pTotal == dTotal then
@@ -258,7 +258,9 @@ local function SettleRound()
         statusBannerText = string.format("|cffd8b4fe%s!|r  |cff9d4edd+%.2f Credits|r", labelStr, netDelta)
         LogBJPersonal(totalWagered, labelStr, netDelta, true, false)
         ns.RecordGameOutcome("BLACKJACK", true, totalWagered, effMult, netDelta, shortHash)
-        if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON) end
+        if PlaySound and SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON then
+            PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+        end
     elseif netDelta < 0 then
         local netLoss = math.abs(netDelta)
         statusBannerText = string.format("|cffe63946%s|r  |cff888899(-%.2f Credits)|r", labelStr, netLoss)
@@ -316,10 +318,17 @@ end
 
 local function StartNewHand()
     if state == "PLAYER_TURN" or state == "DEALER_TURN" then return end
+    if BetInput then BetInput:ClearFocus() end
     EnsureShoe()
 
     local ok, actualBet = ns.DeductCredits(BetInput:GetText())
-    if not ok then return end
+    if not ok then
+        if ns.db and (ns.db.credits or 0) >= 0.01 then
+            statusBannerText = "|cffe63946Enter a valid bet amount|r"
+            if StatusText then StatusText:SetText(statusBannerText) end
+        end
+        return
+    end
     BetInput:SetText(string.format("%.2f", actualBet))
 
     if shoe:NeedsReshuffle(RESHUFFLE_RATIO) then
@@ -369,7 +378,7 @@ local function ActionHit()
         hand.busted = true
         hand.stood = true
         AdvancePlayerHand()
-    elseif total == 21 then
+    elseif total == 21 or #hand.cards >= MAX_CARDS_PER_HAND then
         hand.stood = true
         AdvancePlayerHand()
     else
@@ -389,11 +398,15 @@ local function ActionDouble()
     if state ~= "PLAYER_TURN" then return end
     local hand = playerHands[activeHandIdx]
     if not hand or #hand.cards ~= 2 then return end
-    if (ns.db.credits or 0) < hand.bet then return end
+    if ((ns.db and ns.db.credits) or 0) + 0.001 < hand.bet then return end
 
     local ok, extra = ns.DeductCredits(hand.bet)
     if not ok then return end
-    hand.bet = hand.bet + extra
+    if extra < hand.bet - 0.005 then
+        ns.AddCredits(extra)
+        return
+    end
+    hand.bet = math.floor((hand.bet + extra) * 100 + 0.5) / 100
     hand.doubled = true
 
     table.insert(hand.cards, shoe:Draw())
@@ -413,10 +426,14 @@ local function ActionSplit()
     local v1 = Cards.GetBlackjackValue(hand.cards[1].rank)
     local v2 = Cards.GetBlackjackValue(hand.cards[2].rank)
     if v1 ~= v2 then return end
-    if (ns.db.credits or 0) < hand.bet then return end
+    if ((ns.db and ns.db.credits) or 0) + 0.001 < hand.bet then return end
 
     local ok, extra = ns.DeductCredits(hand.bet)
     if not ok then return end
+    if extra < hand.bet - 0.005 then
+        ns.AddCredits(extra)
+        return
+    end
 
     local cardA = hand.cards[1]
     local cardB = hand.cards[2]
@@ -492,17 +509,22 @@ function Blackjack:Refresh()
     SetButtonEnabled(BtnHalf, isIdle)
     SetButtonEnabled(Btn2x, isIdle)
     SetButtonEnabled(BtnMax, isIdle)
-    if isIdle then BetInput:Enable() else BetInput:Disable() end
+    if isIdle then
+        BetInput:Enable()
+    else
+        BetInput:ClearFocus()
+        BetInput:Disable()
+    end
 
-    SetButtonEnabled(HitBtn, isTurn)
+    SetButtonEnabled(HitBtn, isTurn and curHand and #curHand.cards < MAX_CARDS_PER_HAND)
     SetButtonEnabled(StandBtn, isTurn)
 
-    local canDouble = isTurn and curHand and #curHand.cards == 2 and (db.credits or 0) >= curHand.bet
+    local canDouble = isTurn and curHand and #curHand.cards == 2 and ((db.credits or 0) + 0.001 >= curHand.bet)
     SetButtonEnabled(DoubleBtn, canDouble)
 
     local canSplit = isTurn and #playerHands == 1 and curHand and #curHand.cards == 2
         and Cards.GetBlackjackValue(curHand.cards[1].rank) == Cards.GetBlackjackValue(curHand.cards[2].rank)
-        and (db.credits or 0) >= curHand.bet
+        and ((db.credits or 0) + 0.001 >= curHand.bet)
     SetButtonEnabled(SplitBtn, canSplit)
 
     -- Left Sidebar Personal Blackjack History
@@ -581,22 +603,38 @@ function Blackjack:Build(parent)
     BtnMax:SetPoint("RIGHT", -3, 0)
     BtnMax:SetScript("OnClick", function()
         ns.CheckBankrollRefill()
-        BetInput:SetText(string.format("%.2f", math.max(0, ns.db.credits)))
+        local bal = (ns.db and ns.db.credits) or 0
+        BetInput:SetText(string.format("%.2f", math.max(0, bal)))
     end)
 
     Btn2x = ns.CreateCustomButton(BetBox, 32, 24, "2x", false)
     Btn2x:SetPoint("RIGHT", BtnMax, "LEFT", -3, 0)
     Btn2x:SetScript("OnClick", function()
         local cur = tonumber(BetInput:GetText()) or 0
-        local nextVal = math.min(ns.db.credits, cur * 2)
-        BetInput:SetText(string.format("%.2f", math.max(1, nextVal)))
+        local bal = (ns.db and ns.db.credits) or 0
+        local nextVal = math.min(bal, cur * 2)
+        if bal >= 1 then
+            nextVal = math.max(1, nextVal)
+        else
+            nextVal = math.max(0, math.floor(nextVal * 100 + 1e-6) / 100)
+        end
+        BetInput:SetText(string.format("%.2f", nextVal))
     end)
 
     BtnHalf = ns.CreateCustomButton(BetBox, 32, 24, "1/2", false)
     BtnHalf:SetPoint("RIGHT", Btn2x, "LEFT", -3, 0)
     BtnHalf:SetScript("OnClick", function()
         local cur = tonumber(BetInput:GetText()) or 0
-        BetInput:SetText(string.format("%.2f", math.max(1, math.floor((cur / 2) * 100) / 100)))
+        local bal = (ns.db and ns.db.credits) or 0
+        local nextVal = math.floor((cur / 2) * 100 + 1e-6) / 100
+        if bal >= 1 then
+            nextVal = math.max(1, nextVal)
+        elseif bal > 0 then
+            nextVal = math.max(0.01, math.min(bal, nextVal))
+        else
+            nextVal = 0
+        end
+        BetInput:SetText(string.format("%.2f", nextVal))
     end)
 
     -- Rules Summary Box
@@ -625,10 +663,14 @@ function Blackjack:Build(parent)
         row:SetSize(206, 26)
         row:SetPoint("TOPLEFT", 12, -176 - (i * 30))
         ns.StyleBox(row, COLORS.purpleDim, nil)
-        row.left = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        row.left:SetPoint("LEFT", 8, 0)
         row.right = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.right:SetPoint("RIGHT", -8, 0)
+        row.right:SetJustifyH("RIGHT")
+        row.left = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.left:SetPoint("LEFT", 8, 0)
+        row.left:SetPoint("RIGHT", row.right, "LEFT", -4, 0)
+        row.left:SetJustifyH("LEFT")
+        row.left:SetWordWrap(false)
         row:Hide()
         PersonalRows[i] = row
     end
