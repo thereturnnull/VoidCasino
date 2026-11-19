@@ -10,7 +10,7 @@ A modular, dark-obsidian and neon-purple casino hub addon built for **WoW: Forev
 * **Hub:** Unified bankroll tracker, 1-hour auto-refill timer, cross-game round log, and a pop-out Guild Leaderboard drawer (Top 5 Live Balances, Top 5 All-Time Peak Credits, and per-game high scores).
 * **Crash:** 60 FPS curve renderer with dynamic segment scaling, auto-cashout, auto-bet, and verifiable round hashes.
 * **Blackjack:** 6-deck shoe, 3:2 natural payouts, dealer stands on all 17s (S17), Hit, Stand, Double Down, and Split.
-* **Roulette:** *(In Development)*
+* **Roulette:** European single-zero 37-pocket wheel with Void-Purple `0`, pop-out zoomed spin wheel over a dimmed backdrop, subtle win confetti, full 0–36 inside & outside betting felt, Instant Roll toggle, and spin history.
 * **Video Poker:** *(In Development)*
 * **Hi-Lo:** 0–100 interactive slider with Roll Over / Roll Under toggle, 0.8s sweep-and-decelerate scrub roll animation (with an Instant Roll toggle), live win chance & payout multiplier (1% house edge), quick presets, bet controls, and roll history.
 
