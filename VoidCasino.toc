@@ -1,8 +1,8 @@
 ## Interface: 16001
 ## Title: |cff9d4eddVoid|rCasino
 ## Notes: Modular casino hub with unified bankroll, 1-hour refill lockout, and guild leaderboards.
-## Author: null
-## Version: 2.5.1
+## Author: thereturnnull
+## Version: 2.5.2
 ## SavedVariablesPerCharacter: VoidCasinoDB
 
 Core.lua

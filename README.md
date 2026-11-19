@@ -14,6 +14,6 @@ VoidCasino is a dark-obsidian and neon-purple casino hub addon for **WoW: Foreve
 * `/vcasino` or `/voidcasino` — Toggle the VoidCasino window.
 
 ## License & Usage Terms
-Copyright (c) 2026 null. Licensed under **CC BY-NC-SA 4.0** (Attribution-NonCommercial-ShareAlike). See the [LICENSE](LICENSE) file for the full legal text.
+Copyright (c) 2026 thereturnnull. Licensed under **CC BY-NC-SA 4.0** (Attribution-NonCommercial-ShareAlike). See the [LICENSE](LICENSE) file for the full legal text.
 * **No Commercial Use:** You may not sell this addon, monetize it, or incorporate this code into any paid or commercial product.
-* **Credit Required:** You may not claim this code as your own original work. Any forks, edits, or redistributions must credit the original author (`null`) and remain non-commercial under the same license.
+* **Credit Required:** You may not claim this code as your own original work. Any forks, edits, or redistributions must credit the original author (`thereturnnull`) and remain non-commercial under the same license.
