@@ -12,7 +12,7 @@ A modular, dark-obsidian and neon-purple casino hub addon built for **WoW: Forev
 * **Blackjack:** 6-deck shoe, 3:2 natural payouts, dealer stands on all 17s (S17), Hit, Stand, Double Down, and Split.
 * **Roulette:** *(In Development)*
 * **Video Poker:** *(In Development)*
-* **Hi-Lo:** 0–100 interactive slider with Roll Over / Roll Under toggle, live win chance & payout multiplier (1% house edge), quick presets, bet controls, and roll history.
+* **Hi-Lo:** 0–100 interactive slider with Roll Over / Roll Under toggle, 0.8s sweep-and-decelerate scrub roll animation (with an Instant Roll toggle), live win chance & payout multiplier (1% house edge), quick presets, bet controls, and roll history.
 
 ## Slash Commands
 * `/vcasino` or `/voidcasino` — Toggle the VoidCasino window.

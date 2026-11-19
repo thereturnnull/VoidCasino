@@ -17,7 +17,9 @@ local NUM_HISTORY_ROWS    = 5
 local TRACK_W             = 478
 local TRACK_INNER_W       = 476
 local TRACK_H             = 18
-local SLIDE_ANIM_DURATION = 0.14
+local ROLL_ANIM_DURATION  = 0.80
+local MIN_SCRUB_DIST      = 180
+local IDEAL_SCRUB_DIST    = 250
 
 local WIN_ZONE_COLOR  = COLORS.purpleBtn
 local LOSS_ZONE_COLOR = { 0.55, 0.13, 0.19, 0.85 }
@@ -26,26 +28,29 @@ local SCALE_TICKS     = { 0, 25, 50, 75, 100 }
 
 -- Runtime State
 local HiLoFrame
-local targetValue      = 50
-local rollMode         = "OVER" -- "OVER" or "UNDER"
-local lastRoll         = nil
-local lastWon          = nil
-local lastTarget       = nil
-local lastMode         = nil
-local currentRoundHash = ""
-local isDragging       = false
+local state              = "IDLE" -- "IDLE" or "ROLLING"
+local targetValue        = 50
+local rollMode           = "OVER" -- "OVER" or "UNDER"
+local instantRollEnabled = false
+local pendingRoll        = nil
+local lastRoll           = nil
+local lastWon            = nil
+local lastTarget         = nil
+local lastMode           = nil
+local currentRoundHash   = ""
+local statusBannerText   = "|cff888899Adjust the slider and click Roll|r"
+local isDragging         = false
 
--- Visual Pointer Glide State (non-blocking; bet settles immediately)
-local animatingMarker = false
-local animTimer       = 0
-local markerStartVal  = 50
-local markerTargetVal = 50
+-- Scrubbing Animation State (non-spoiler until landing when Instant Roll is off)
+local animTimer        = 0
+local scrubStartU      = 50
+local scrubEndU        = 50
 local markerDisplayVal = 50
 
 -- UI References
 local RollBtn, RollBtnText
-local BetInput, BtnHalf, Btn2x, BtnMax
-local ModeUnderBtn, ModeOverBtn
+local BetInput, BtnHalf, Btn2x, BtnMax, InstantSwitch
+local ModeUnderBtn, ModeOverBtn, MinusBtn, PlusBtn
 local BigRollText, SubStatusText
 local TrackBar, TrackInner, LeftZoneTex, RightZoneTex, ThumbFrame
 local ResultMarker, ResultLine, ResultStem, ResultPill, ResultPillText
@@ -57,6 +62,43 @@ local PresetButtons = {}
 -- ============================================================================
 -- Math & Probability Helpers
 -- ============================================================================
+local function SetButtonEnabled(btn, enabled)
+    if not btn then return end
+    if enabled then
+        btn:Enable()
+        btn:SetAlpha(1.0)
+    else
+        btn:Disable()
+        btn:SetAlpha(0.35)
+    end
+end
+
+local function FoldTo0100(u)
+    local m = u % 200
+    if m < 0 then m = m + 200 end
+    if m > 100 then return 200 - m end
+    return m
+end
+
+local function ComputeScrubEndU(startPos, finalRoll)
+    local bestCand = 200 + finalRoll
+    local bestDiff = math.huge
+    for k = 1, 3 do
+        local c1 = 200 * k + finalRoll
+        local c2 = 200 * k - finalRoll
+        for _, cand in ipairs({ c1, c2 }) do
+            local dist = cand - startPos
+            if dist >= MIN_SCRUB_DIST then
+                local diff = math.abs(dist - IDEAL_SCRUB_DIST)
+                if diff < bestDiff then
+                    bestDiff = diff
+                    bestCand = cand
+                end
+            end
+        end
+    end
+    return bestCand
+end
 local function ClampTarget(val)
     local rounded = math.floor((tonumber(val) or 50) + 0.5)
     if rounded < MIN_TARGET then return MIN_TARGET end
@@ -173,7 +215,11 @@ local function UpdateMetrics()
         ProfitText:SetText(string.format("+%.2f", profit))
     end
     if RollBtnText then
-        RollBtnText:SetText(string.format("Roll %s %d", rollMode == "OVER" and "Over" or "Under", targetValue))
+        if state == "ROLLING" then
+            RollBtnText:SetText("Rolling...")
+        else
+            RollBtnText:SetText(string.format("Roll %s %d", rollMode == "OVER" and "Over" or "Under", targetValue))
+        end
     end
 
     for i = 1, #PRESETS do
@@ -187,48 +233,77 @@ local function UpdateMetrics()
     end
 end
 
-local function UpdateResultDisplay()
-    if not BigRollText or not SubStatusText then return end
-    if lastRoll == nil then
-        BigRollText:SetTextColor(unpack(COLORS.textMuted))
-        BigRollText:SetText("--.--")
-        SubStatusText:SetText("|cff888899Adjust the slider and click Roll|r")
-        if ResultMarker then ResultMarker:Hide() end
-        return
-    end
-
-    BigRollText:SetText(string.format("%.2f", lastRoll))
-    if lastWon then
+local function ApplyMarkerColors(isWin)
+    if isWin then
         BigRollText:SetTextColor(0.86, 0.72, 1.00, 1.00)
-    else
-        BigRollText:SetTextColor(unpack(COLORS.crashRed))
-    end
-
-    if ResultMarker then
-        ResultMarker:Show()
-        ResultPillText:SetText(string.format("%.2f", lastRoll))
-        if lastWon then
+        if ResultMarker then
             ResultLine:SetColorTexture(0.86, 0.72, 1.00, 1.00)
             ResultStem:SetColorTexture(0.86, 0.72, 1.00, 1.00)
             ns.StyleBox(ResultPill, COLORS.purpleBtn, COLORS.textLight)
             ResultPillText:SetTextColor(1, 1, 1, 1)
-        else
+        end
+    else
+        BigRollText:SetTextColor(unpack(COLORS.crashRed))
+        if ResultMarker then
             ResultLine:SetColorTexture(unpack(COLORS.crashRed))
             ResultStem:SetColorTexture(unpack(COLORS.crashRed))
             ns.StyleBox(ResultPill, COLORS.crashRedDim, COLORS.crashRed)
             ResultPillText:SetTextColor(1, 0.85, 0.88, 1)
         end
-        PositionResultMarker(markerDisplayVal)
+    end
+end
+
+local function RenderScrubFrame(posVal, tgt, mode)
+    if not BigRollText then return end
+    local shownVal = math.floor(math.max(0, math.min(100, posVal)) * 100 + 0.5) / 100
+    local isWinningPos = (mode == "UNDER") and (shownVal < tgt) or (shownVal > tgt)
+
+    BigRollText:SetText(string.format("%.2f", shownVal))
+    ApplyMarkerColors(isWinningPos)
+
+    if ResultMarker then
+        ResultMarker:Show()
+        ResultPillText:SetText(string.format("%.2f", shownVal))
+        PositionResultMarker(posVal)
+    end
+end
+
+local function UpdateResultDisplay()
+    if not BigRollText or not SubStatusText then return end
+    if state == "ROLLING" and pendingRoll then
+        SubStatusText:SetText("|cff9d4eddROLLING...|r")
+        RenderScrubFrame(markerDisplayVal, pendingRoll.target, pendingRoll.mode)
+        return
+    end
+
+    SubStatusText:SetText(statusBannerText)
+
+    if lastRoll == nil then
+        BigRollText:SetTextColor(unpack(COLORS.textMuted))
+        BigRollText:SetText("--.--")
+        if ResultMarker then ResultMarker:Hide() end
+        return
+    end
+
+    BigRollText:SetText(string.format("%.2f", lastRoll))
+    ApplyMarkerColors(lastWon)
+
+    if ResultMarker then
+        ResultMarker:Show()
+        ResultPillText:SetText(string.format("%.2f", lastRoll))
+        PositionResultMarker(lastRoll)
     end
 end
 
 local function SetTargetValue(newTarget)
+    if state == "ROLLING" then return end
     targetValue = ClampTarget(newTarget)
     UpdateSliderVisuals()
     UpdateMetrics()
 end
 
 local function SetRollMode(newMode)
+    if state == "ROLLING" then return end
     if newMode ~= "OVER" and newMode ~= "UNDER" then return end
     if rollMode == newMode then return end
     rollMode = newMode
@@ -250,16 +325,74 @@ local function UpdateTargetFromCursor()
 end
 
 -- ============================================================================
--- Instant Roll Execution
+-- Roll Settlement & Execution (Deferred Scrub Reveal vs. Instant Roll)
 -- ============================================================================
+local function SettleRoll(data)
+    if not data then return end
+    state            = "IDLE"
+    pendingRoll      = nil
+    lastRoll         = data.roll
+    lastWon          = data.won
+    lastTarget       = data.target
+    lastMode         = data.mode
+    markerDisplayVal = data.roll
+    currentRoundHash = data.hash
+
+    ns.SetHashText("Roll SHA-Seed: " .. string.sub(data.hash, 1, 24) .. "...")
+
+    if data.won then
+        local payout    = math.floor(data.bet * data.mult * 100 + 1e-6) / 100
+        local netProfit = math.floor((payout - data.bet) * 100 + 0.5) / 100
+        ns.AddCredits(payout)
+
+        LogHiLoPersonal({
+            player = data.player,
+            roll   = data.roll,
+            target = data.target,
+            mode   = data.mode,
+            bet    = data.bet,
+            mult   = data.mult,
+            profit = netProfit,
+            won    = true,
+        })
+        LogHiLoTicker(data.roll, true)
+
+        statusBannerText = string.format("|cffd8b4feWIN!|r  |cff9d4edd+%.2f Credits|r  |cff888899(%.2fx)|r", netProfit, data.mult)
+        ns.RecordGameOutcome("HILO", true, data.bet, data.mult, netProfit, data.shortHash)
+        if PlaySound and SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON then
+            PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+        end
+    else
+        LogHiLoPersonal({
+            player = data.player,
+            roll   = data.roll,
+            target = data.target,
+            mode   = data.mode,
+            bet    = data.bet,
+            mult   = data.mult,
+            profit = 0,
+            won    = false,
+        })
+        LogHiLoTicker(data.roll, false)
+
+        local opSym = (data.mode == "OVER") and ">" or "<"
+        statusBannerText = string.format("|cffe63946MISS|r  |cff888899(-%.2f • Needed %s %d)|r", data.bet, opSym, data.target)
+        ns.RecordGameOutcome("HILO", false, data.bet, data.mult, 0, data.shortHash)
+    end
+
+    HiLo:Refresh()
+end
+
 local function ExecuteRoll()
-    if not BetInput then return end
+    if state == "ROLLING" or not BetInput then return end
     BetInput:ClearFocus()
+    isDragging = false
 
     local ok, actualBet = ns.DeductCredits(BetInput:GetText())
     if not ok then
         if ns.db and (ns.db.credits or 0) >= 0.01 then
-            SubStatusText:SetText("|cffe63946Enter a valid bet amount|r")
+            statusBannerText = "|cffe63946Enter a valid bet amount|r"
+            SubStatusText:SetText(statusBannerText)
         end
         return
     end
@@ -279,69 +412,38 @@ local function ExecuteRoll()
         won  = (roll > targetValue)
     end
 
-    currentRoundHash = ns.GenerateRoundHash(roll * 100 + actualBet)
-    local shortHash  = string.sub(currentRoundHash, 1, 16)
-    ns.SetHashText("Roll SHA-Seed: " .. string.sub(currentRoundHash, 1, 24) .. "...")
+    local roundHash = ns.GenerateRoundHash(roll * 100 + actualBet)
+    local rollData = {
+        roll      = roll,
+        won       = won,
+        target    = targetValue,
+        mode      = rollMode,
+        bet       = actualBet,
+        mult      = mult,
+        hash      = roundHash,
+        shortHash = string.sub(roundHash, 1, 16),
+        player    = ns.FormatPlayerName(ns.GetMyFormattedName()),
+    }
 
-    local myPlayer = ns.FormatPlayerName(ns.GetMyFormattedName())
-    local prevDisplay = (lastRoll ~= nil) and markerDisplayVal or targetValue
-
-    if won then
-        local payout    = math.floor(actualBet * mult * 100 + 1e-6) / 100
-        local netProfit = math.floor((payout - actualBet) * 100 + 0.5) / 100
-        ns.AddCredits(payout)
-
-        LogHiLoPersonal({
-            player = myPlayer,
-            roll   = roll,
-            target = targetValue,
-            mode   = rollMode,
-            bet    = actualBet,
-            mult   = mult,
-            profit = netProfit,
-            won    = true,
-        })
-        LogHiLoTicker(roll, true)
-
-        SubStatusText:SetText(string.format("|cffd8b4feWIN!|r  |cff9d4edd+%.2f Credits|r  |cff888899(%.2fx)|r", netProfit, mult))
-        ns.RecordGameOutcome("HILO", true, actualBet, mult, netProfit, shortHash)
-        if PlaySound and SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON then
-            PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
-        end
-    else
-        LogHiLoPersonal({
-            player = myPlayer,
-            roll   = roll,
-            target = targetValue,
-            mode   = rollMode,
-            bet    = actualBet,
-            mult   = mult,
-            profit = 0,
-            won    = false,
-        })
-        LogHiLoTicker(roll, false)
-
-        local opSym = (rollMode == "OVER") and ">" or "<"
-        SubStatusText:SetText(string.format("|cffe63946MISS|r  |cff888899(-%.2f • Needed %s %d)|r", actualBet, opSym, targetValue))
-        ns.RecordGameOutcome("HILO", false, actualBet, mult, 0, shortHash)
+    if instantRollEnabled then
+        -- Bypass deferred reveal and settle immediately
+        SettleRoll(rollData)
+        return
     end
 
-    lastRoll   = roll
-    lastWon    = won
-    lastTarget = targetValue
-    lastMode   = rollMode
-
-    markerStartVal   = prevDisplay
-    markerTargetVal  = roll
-    markerDisplayVal = prevDisplay
+    state            = "ROLLING"
+    pendingRoll      = rollData
+    scrubStartU      = (lastRoll ~= nil) and lastRoll or targetValue
+    scrubEndU        = ComputeScrubEndU(scrubStartU, roll)
+    markerDisplayVal = scrubStartU
     animTimer        = 0
-    animatingMarker  = true
 
-    HiLo:Refresh()
+    ns.SetHashText("Roll SHA-Seed: Rolling...")
+    ns.RefreshHub()
 end
 
 local function OnUpdateTick(self, elapsed)
-    if isDragging then
+    if isDragging and state ~= "ROLLING" then
         if IsMouseButtonDown("LeftButton") then
             UpdateTargetFromCursor()
         else
@@ -349,18 +451,18 @@ local function OnUpdateTick(self, elapsed)
         end
     end
 
-    if animatingMarker then
+    if state == "ROLLING" and pendingRoll then
         animTimer = animTimer + elapsed
-        local t = animTimer / SLIDE_ANIM_DURATION
+        local t = animTimer / ROLL_ANIM_DURATION
         if t >= 1 then
-            markerDisplayVal = markerTargetVal
-            animatingMarker  = false
+            SettleRoll(pendingRoll)
         else
-            -- Smooth ease-out quadratic interpolation
-            local eased = 1 - ((1 - t) * (1 - t))
-            markerDisplayVal = markerStartVal + (markerTargetVal - markerStartVal) * eased
+            -- Smooth cubic ease-out deceleration across sweeps onto final roll
+            local inv   = 1 - t
+            local eased = 1 - (inv * inv * inv)
+            markerDisplayVal = FoldTo0100(scrubStartU + (scrubEndU - scrubStartU) * eased)
+            RenderScrubFrame(markerDisplayVal, pendingRoll.target, pendingRoll.mode)
         end
-        PositionResultMarker(markerDisplayVal)
     end
 end
 
@@ -368,7 +470,7 @@ end
 -- Module Interface Methods
 -- ============================================================================
 function HiLo:IsBusy()
-    return false
+    return state == "ROLLING"
 end
 
 function HiLo:Refresh()
@@ -376,6 +478,27 @@ function HiLo:Refresh()
     if not HiLoFrame or not db then return end
     db.hiloHistory     = db.hiloHistory or {}
     db.hiloPersonalLog = db.hiloPersonalLog or {}
+
+    local isIdle = (state ~= "ROLLING")
+    SetButtonEnabled(RollBtn, isIdle)
+    SetButtonEnabled(BtnHalf, isIdle)
+    SetButtonEnabled(Btn2x, isIdle)
+    SetButtonEnabled(BtnMax, isIdle)
+    SetButtonEnabled(ModeUnderBtn, isIdle)
+    SetButtonEnabled(ModeOverBtn, isIdle)
+    SetButtonEnabled(MinusBtn, isIdle)
+    SetButtonEnabled(PlusBtn, isIdle)
+    for i = 1, #PRESETS do
+        SetButtonEnabled(PresetButtons[i], isIdle)
+    end
+    if BetInput then
+        if isIdle then
+            BetInput:Enable()
+        else
+            BetInput:ClearFocus()
+            BetInput:Disable()
+        end
+    end
 
     -- Top Ticker Pills
     for i = 1, NUM_TICKER_PILLS do
@@ -425,7 +548,9 @@ function HiLo:Refresh()
 end
 
 function HiLo:OnShow()
-    if currentRoundHash ~= "" then
+    if state == "ROLLING" then
+        ns.SetHashText("Roll SHA-Seed: Rolling...")
+    elseif currentRoundHash ~= "" then
         ns.SetHashText("Roll SHA-Seed: " .. string.sub(currentRoundHash, 1, 24) .. "...")
     else
         ns.SetHashText("Hi-Lo — 0-100 Slider | 1% House Edge")
@@ -435,6 +560,9 @@ end
 
 function HiLo:OnHide()
     isDragging = false
+    if state == "ROLLING" and pendingRoll then
+        SettleRoll(pendingRoll)
+    end
 end
 
 function HiLo:Build(parent)
@@ -453,13 +581,13 @@ function HiLo:Build(parent)
     RollBtn:SetScript("OnClick", ExecuteRoll)
 
     local BetLbl = LeftPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    BetLbl:SetPoint("TOPLEFT", 12, -64)
+    BetLbl:SetPoint("TOPLEFT", 12, -62)
     BetLbl:SetText("Bet Amount")
     BetLbl:SetTextColor(unpack(COLORS.textMuted))
 
     local BetBox = CreateFrame("Frame", nil, LeftPanel)
     BetBox:SetSize(206, 30)
-    BetBox:SetPoint("TOPLEFT", 12, -80)
+    BetBox:SetPoint("TOPLEFT", 12, -76)
     ns.StyleBox(BetBox, COLORS.bgInput, COLORS.border)
 
     BetInput = CreateFrame("EditBox", nil, BetBox)
@@ -514,7 +642,7 @@ function HiLo:Build(parent)
     -- Quick Win-Chance Presets
     local PresetBar = CreateFrame("Frame", nil, LeftPanel)
     PresetBar:SetSize(206, 24)
-    PresetBar:SetPoint("TOPLEFT", 12, -118)
+    PresetBar:SetPoint("TOPLEFT", 12, -114)
 
     for i = 1, #PRESETS do
         local pct = PRESETS[i]
@@ -528,15 +656,25 @@ function HiLo:Build(parent)
         PresetButtons[i] = pBtn
     end
 
+    -- Instant Roll Toggle (bypasses scrubbing animation & deferred reveal)
+    local instantContainer
+    instantContainer, InstantSwitch = ns.CreateToggleSwitch(LeftPanel, "Instant Roll", function(val)
+        instantRollEnabled = val
+        if val and state == "ROLLING" and pendingRoll then
+            SettleRoll(pendingRoll)
+        end
+    end)
+    instantContainer:SetPoint("TOPLEFT", 12, -142)
+
     local HistLbl = LeftPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    HistLbl:SetPoint("TOPLEFT", 12, -150)
+    HistLbl:SetPoint("TOPLEFT", 12, -174)
     HistLbl:SetText("Recent Rolls")
     HistLbl:SetTextColor(unpack(COLORS.textMuted))
 
     for i = 1, NUM_HISTORY_ROWS do
         local row = CreateFrame("Frame", nil, LeftPanel)
-        row:SetSize(206, 28)
-        row:SetPoint("TOPLEFT", 12, -168 - (i - 1) * 32)
+        row:SetSize(206, 24)
+        row:SetPoint("TOPLEFT", 12, -192 - (i - 1) * 28)
         ns.StyleBox(row, COLORS.purpleDim, nil)
 
         row.right = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -678,7 +816,7 @@ function HiLo:Build(parent)
     SliderHitArea:EnableMouseWheel(true)
 
     SliderHitArea:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" then
+        if button == "LeftButton" and state ~= "ROLLING" then
             isDragging = true
             UpdateTargetFromCursor()
         end
@@ -695,7 +833,9 @@ function HiLo:Build(parent)
     end)
 
     SliderHitArea:SetScript("OnMouseWheel", function(self, delta)
-        SetTargetValue(targetValue + (delta > 0 and 1 or -1))
+        if state ~= "ROLLING" then
+            SetTargetValue(targetValue + (delta > 0 and 1 or -1))
+        end
     end)
 
     -- Scale Labels (0, 25, 50, 75, 100)
@@ -730,11 +870,11 @@ function HiLo:Build(parent)
     local targetCard
     targetCard, TargetSubText, TargetValText = CreateStatCard(1, "ROLL OVER")
 
-    local MinusBtn = ns.CreateCustomButton(targetCard, 20, 20, "-", false)
+    MinusBtn = ns.CreateCustomButton(targetCard, 20, 20, "-", false)
     MinusBtn:SetPoint("BOTTOMLEFT", 6, 8)
     MinusBtn:SetScript("OnClick", function() SetTargetValue(targetValue - 1) end)
 
-    local PlusBtn = ns.CreateCustomButton(targetCard, 20, 20, "+", false)
+    PlusBtn = ns.CreateCustomButton(targetCard, 20, 20, "+", false)
     PlusBtn:SetPoint("BOTTOMRIGHT", -6, 8)
     PlusBtn:SetScript("OnClick", function() SetTargetValue(targetValue + 1) end)
 
@@ -750,6 +890,7 @@ function HiLo:Build(parent)
     ProfitText:SetTextColor(unpack(COLORS.purpleBright))
 
     HiLoFrame:SetScript("OnUpdate", OnUpdateTick)
+    HiLoFrame:SetScript("OnHide", function() HiLo:OnHide() end)
     UpdateModeButtons()
     UpdateSliderVisuals()
     UpdateMetrics()
