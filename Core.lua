@@ -32,6 +32,7 @@ ns.COLORS = {
 -- Unified Bankroll Constants
 ns.STARTING_CREDITS = 1000
 ns.REFILL_COOLDOWN  = 3600 -- 1 hour (3600 seconds) when balance hits 0
+ns.DB_SEASON        = 1    -- Increment to perform a clean one-time wipe across clients
 
 -- Game Module Registry & Leaderboard Definitions
 ns.GameOrder = {
@@ -315,6 +316,7 @@ function ns.CreateCustomButton(parent, width, height, label, isPrimary)
     btn.label:SetTextColor(unpack(ns.COLORS.textLight))
 
     btn:SetScript("OnEnter", function(self)
+        if self.IsEnabled and not self:IsEnabled() then return end
         if self.isPrimary then
             self.bgTex:SetColorTexture(unpack(ns.COLORS.purpleHover))
         else
@@ -598,7 +600,7 @@ function ns.RecordGameOutcome(gameRaw, won, betAmt, multVal, profitVal, shortHas
 
     if won then
         db.wins = (db.wins or 0) + 1
-        db.netProfit = (db.netProfit or 0) + profitVal
+        db.netProfit = math.floor(((db.netProfit or 0) + profitVal) * 100 + 0.5) / 100
         if db.credits > (db.peakBalance or 0) then
             db.peakBalance = db.credits
         end
@@ -612,7 +614,10 @@ function ns.RecordGameOutcome(gameRaw, won, betAmt, multVal, profitVal, shortHas
         end
     else
         db.losses = (db.losses or 0) + 1
-        db.netProfit = (db.netProfit or 0) - betAmt
+        db.netProfit = math.floor(((db.netProfit or 0) - betAmt) * 100 + 0.5) / 100
+    end
+    if math.abs(db.netProfit) < 0.005 then
+        db.netProfit = 0
     end
 
     local entry = {
@@ -867,8 +872,9 @@ EventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
         local loadedName = ...
         if loadedName == ADDON_NAME then
-            if type(VoidCasinoDB) ~= "table" then
+            if type(VoidCasinoDB) ~= "table" or VoidCasinoDB.dbSeason ~= ns.DB_SEASON then
                 VoidCasinoDB = {
+                    dbSeason         = ns.DB_SEASON,
                     credits          = ns.STARTING_CREDITS,
                     peakBalance      = ns.STARTING_CREDITS,
                     emptyTimestamp   = 0,
@@ -879,12 +885,19 @@ EventFrame:SetScript("OnEvent", function(self, event, ...)
                     gameRecords      = CreateEmptyGameRecords(),
                     clanRecords      = CreateEmptyClanRecords(),
                     clanFeed         = {},
-                    crashHistory     = {1.49, 12.45, 3.34, 2.00, 2.75, 3.19, 1.04, 5.72},
+                    crashHistory     = {},
                     crashPersonalLog = {},
+                    bjPersonalLog    = {},
+                    hiloHistory      = {},
+                    hiloPersonalLog  = {},
+                    roulHistory      = {},
+                    roulPersonalLog  = {},
+                    pokerPersonalLog = {},
                     betLog           = {},
                 }
             end
 
+            VoidCasinoDB.dbSeason         = VoidCasinoDB.dbSeason or ns.DB_SEASON
             VoidCasinoDB.credits          = VoidCasinoDB.credits or ns.STARTING_CREDITS
             VoidCasinoDB.peakBalance      = math.max(VoidCasinoDB.peakBalance or ns.STARTING_CREDITS, VoidCasinoDB.credits)
             VoidCasinoDB.emptyTimestamp   = VoidCasinoDB.emptyTimestamp or 0
@@ -893,8 +906,14 @@ EventFrame:SetScript("OnEvent", function(self, event, ...)
             VoidCasinoDB.netProfit        = VoidCasinoDB.netProfit or 0
             VoidCasinoDB.guildName        = VoidCasinoDB.guildName or ""
             VoidCasinoDB.clanFeed         = VoidCasinoDB.clanFeed or {}
-            VoidCasinoDB.crashHistory     = VoidCasinoDB.crashHistory or {1.49, 12.45, 3.34, 2.00, 2.75, 3.19, 1.04, 5.72}
+            VoidCasinoDB.crashHistory     = VoidCasinoDB.crashHistory or {}
             VoidCasinoDB.crashPersonalLog = VoidCasinoDB.crashPersonalLog or {}
+            VoidCasinoDB.bjPersonalLog    = VoidCasinoDB.bjPersonalLog or {}
+            VoidCasinoDB.hiloHistory      = VoidCasinoDB.hiloHistory or {}
+            VoidCasinoDB.hiloPersonalLog  = VoidCasinoDB.hiloPersonalLog or {}
+            VoidCasinoDB.roulHistory      = VoidCasinoDB.roulHistory or {}
+            VoidCasinoDB.roulPersonalLog  = VoidCasinoDB.roulPersonalLog or {}
+            VoidCasinoDB.pokerPersonalLog = VoidCasinoDB.pokerPersonalLog or {}
             VoidCasinoDB.betLog           = VoidCasinoDB.betLog or {}
 
             EnsureRecordTables(VoidCasinoDB)

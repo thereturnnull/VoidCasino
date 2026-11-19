@@ -2,7 +2,7 @@
 ## Title: |cff9d4eddVoid|rCasino
 ## Notes: Modular casino hub with unified bankroll, 1-hour refill lockout, and guild leaderboards.
 ## Author: null
-## Version: 2.4.0
+## Version: 2.5.0
 ## SavedVariablesPerCharacter: VoidCasinoDB
 
 Core.lua
@@ -12,3 +12,4 @@ Games\Crash.lua
 Games\Blackjack.lua
 Games\HiLo.lua
 Games\Roulette.lua
+Games\VideoPoker.lua

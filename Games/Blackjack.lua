@@ -254,7 +254,7 @@ local function SettleRound()
     local labelStr = table.concat(summaryParts, " / ")
 
     if netDelta > 0 then
-        local effMult = math.floor((totalReturned / totalWagered) * 100) / 100
+        local effMult = math.floor((totalReturned / totalWagered) * 100 + 1e-6) / 100
         statusBannerText = string.format("|cffd8b4fe%s!|r  |cff9d4edd+%.2f Credits|r", labelStr, netDelta)
         LogBJPersonal(totalWagered, labelStr, netDelta, true, false)
         ns.RecordGameOutcome("BLACKJACK", true, totalWagered, effMult, netDelta, shortHash)
@@ -444,13 +444,13 @@ local function ActionSplit()
     activeHandIdx = 1
     statusBannerText = "|cffd8b4feSplit! Playing Hand 1|r"
 
+    ns.RefreshHub()
+
     -- Auto-stand Hand 1 if it immediately hit 21
     local t1 = Cards.EvaluateBlackjackHand(playerHands[1].cards)
     if t1 == 21 then
         playerHands[1].stood = true
         AdvancePlayerHand()
-    else
-        ns.RefreshHub()
     end
 end
 

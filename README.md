@@ -4,8 +4,7 @@ VoidCasino is a dark-obsidian and neon-purple casino hub addon for **WoW: Foreve
 
 ## What's Inside
 * **Unified Hub & Guild Sync:** Track your simulated credit balance, session P/L, and automatic 1-hour empty-balance refills alongside a live cross-game round feed and a pop-out Guild Leaderboard drawer.
-* **Playable Games:** **Crash**, **Blackjack**, **Roulette**, and **Hi-Lo** — all built natively in Pure Lua 5.1 with custom suit sprites and shared bankroll tracking.
-* **Coming Soon:** **Video Poker** *(In Development)*.
+* **Playable Games:** **Crash**, **Blackjack**, **Roulette**, **Video Poker**, and **Hi-Lo** — all built natively in Pure Lua 5.1 with custom suit sprites and shared bankroll tracking.
 
 ## Disclaimer & AI Disclosure
 * **Built Just for Fun:** This addon is a personal hobby project created purely for entertainment with friends and guildmates. All credits, wagers, and payouts are 100% simulated—no real money or in-game gold is ever wagered or exchanged.

@@ -8,56 +8,83 @@ local COLORS = ns.COLORS
 
 local HiLo = {}
 
--- Constants
-local HOUSE_EDGE_PCT      = 1
-local MIN_TARGET          = 2
-local MAX_TARGET          = 98
-local NUM_TICKER_PILLS    = 11
-local NUM_HISTORY_ROWS    = 5
-local TRACK_W             = 478
-local TRACK_INNER_W       = 476
-local TRACK_H             = 18
-local ROLL_ANIM_DURATION  = 0.80
-local MIN_SCRUB_DIST      = 180
-local IDEAL_SCRUB_DIST    = 250
+-- Constants (grouped into CFG to stay well under Lua 5.1's 60-upvalue limit)
+local CFG = {
+    HOUSE_EDGE_PCT     = 1,
+    MIN_TARGET         = 2,
+    MAX_TARGET         = 98,
+    NUM_TICKER_PILLS   = 11,
+    NUM_HISTORY_ROWS   = 5,
+    TRACK_W            = 478,
+    TRACK_INNER_W      = 476,
+    TRACK_H            = 18,
+    ROLL_ANIM_DURATION = 0.80,
+    MIN_SCRUB_DIST     = 180,
+    IDEAL_SCRUB_DIST   = 250,
 
-local WIN_ZONE_COLOR  = COLORS.purpleBtn
-local LOSS_ZONE_COLOR = { 0.55, 0.13, 0.19, 0.85 }
-local PRESETS         = { 10, 25, 50, 75 }
-local SCALE_TICKS     = { 0, 25, 50, 75, 100 }
+    WIN_ZONE_COLOR  = COLORS.purpleBtn,
+    LOSS_ZONE_COLOR = { 0.55, 0.13, 0.19, 0.85 },
+    PRESETS         = { 10, 25, 50, 75 },
+    SCALE_TICKS     = { 0, 25, 50, 75, 100 },
+}
 
--- Runtime State
-local HiLoFrame
-local state              = "IDLE" -- "IDLE" or "ROLLING"
-local targetValue        = 50
-local rollMode           = "OVER" -- "OVER" or "UNDER"
-local instantRollEnabled = false
-local pendingRoll        = nil
-local lastRoll           = nil
-local lastWon            = nil
-local lastTarget         = nil
-local lastMode           = nil
-local currentRoundHash   = ""
-local statusBannerText   = "|cff888899Adjust the slider and click Roll|r"
-local isDragging         = false
+-- Runtime State (grouped into ST)
+local ST = {
+    state              = "IDLE", -- "IDLE" or "ROLLING"
+    targetValue        = 50,
+    rollMode           = "OVER", -- "OVER" or "UNDER"
+    instantRollEnabled = false,
+    pendingRoll        = nil,
+    lastRoll           = nil,
+    lastWon            = nil,
+    lastTarget         = nil,
+    lastMode           = nil,
+    currentRoundHash   = "",
+    statusBannerText   = "|cff888899Adjust the slider and click Roll|r",
+    isDragging         = false,
 
--- Scrubbing Animation State (non-spoiler until landing when Instant Roll is off)
-local animTimer        = 0
-local scrubStartU      = 50
-local scrubEndU        = 50
-local markerDisplayVal = 50
+    -- Scrubbing Animation State (non-spoiler until landing when Instant Roll is off)
+    animTimer        = 0,
+    scrubStartU      = 50,
+    scrubEndU        = 50,
+    markerDisplayVal = 50,
+}
 
--- UI References
-local RollBtn, RollBtnText
-local BetInput, BtnHalf, Btn2x, BtnMax, InstantSwitch
-local ModeUnderBtn, ModeOverBtn, MinusBtn, PlusBtn
-local BigRollText, SubStatusText
-local TrackBar, TrackInner, LeftZoneTex, RightZoneTex, ThumbFrame
-local ResultMarker, ResultLine, ResultStem, ResultPill, ResultPillText
-local TargetValText, TargetSubText, WinChanceText, MultText, ProfitText
-local TickerPills   = {}
-local PersonalRows  = {}
-local PresetButtons = {}
+-- UI References (grouped into UI)
+local UI = {
+    HiLoFrame      = nil,
+    RollBtn        = nil,
+    RollBtnText    = nil,
+    BetInput       = nil,
+    BtnHalf        = nil,
+    Btn2x          = nil,
+    BtnMax         = nil,
+    InstantSwitch  = nil,
+    ModeUnderBtn   = nil,
+    ModeOverBtn    = nil,
+    MinusBtn       = nil,
+    PlusBtn        = nil,
+    BigRollText    = nil,
+    SubStatusText  = nil,
+    TrackBar       = nil,
+    TrackInner     = nil,
+    LeftZoneTex    = nil,
+    RightZoneTex   = nil,
+    ThumbFrame     = nil,
+    ResultMarker   = nil,
+    ResultLine     = nil,
+    ResultStem     = nil,
+    ResultPill     = nil,
+    ResultPillText = nil,
+    TargetValText  = nil,
+    TargetSubText  = nil,
+    WinChanceText  = nil,
+    MultText       = nil,
+    ProfitText     = nil,
+    TickerPills    = {},
+    PersonalRows   = {},
+    PresetButtons  = {},
+}
 
 -- ============================================================================
 -- Math & Probability Helpers
@@ -88,8 +115,8 @@ local function ComputeScrubEndU(startPos, finalRoll)
         local c2 = 200 * k - finalRoll
         for _, cand in ipairs({ c1, c2 }) do
             local dist = cand - startPos
-            if dist >= MIN_SCRUB_DIST then
-                local diff = math.abs(dist - IDEAL_SCRUB_DIST)
+            if dist >= CFG.MIN_SCRUB_DIST then
+                local diff = math.abs(dist - CFG.IDEAL_SCRUB_DIST)
                 if diff < bestDiff then
                     bestDiff = diff
                     bestCand = cand
@@ -99,10 +126,11 @@ local function ComputeScrubEndU(startPos, finalRoll)
     end
     return bestCand
 end
+
 local function ClampTarget(val)
     local rounded = math.floor((tonumber(val) or 50) + 0.5)
-    if rounded < MIN_TARGET then return MIN_TARGET end
-    if rounded > MAX_TARGET then return MAX_TARGET end
+    if rounded < CFG.MIN_TARGET then return CFG.MIN_TARGET end
+    if rounded > CFG.MAX_TARGET then return CFG.MAX_TARGET end
     return rounded
 end
 
@@ -114,7 +142,7 @@ local function GetWinChance(tgt, mode)
 end
 
 local function GetMultiplier(winChance)
-    local rtpNumerator = (100 - HOUSE_EDGE_PCT) * 100 -- 9900 for 1% house edge
+    local rtpNumerator = (100 - CFG.HOUSE_EDGE_PCT) * 100 -- 9900 for 1% house edge
     return math.floor((rtpNumerator / winChance) + 1e-9) / 100
 end
 
@@ -151,81 +179,81 @@ end
 -- Visual Updates & Interactive Slider Controls
 -- ============================================================================
 local function PositionResultMarker(rollPos)
-    if not ResultMarker or not TrackInner then return end
+    if not UI.ResultMarker or not UI.TrackInner then return end
     local clamped = math.max(0, math.min(100, rollPos))
-    local xPos = (clamped / 100) * TRACK_INNER_W
-    ResultMarker:ClearAllPoints()
-    ResultMarker:SetPoint("CENTER", TrackInner, "LEFT", xPos, 0)
+    local xPos = (clamped / 100) * CFG.TRACK_INNER_W
+    UI.ResultMarker:ClearAllPoints()
+    UI.ResultMarker:SetPoint("CENTER", UI.TrackInner, "LEFT", xPos, 0)
 end
 
 local function UpdateModeButtons()
-    if not ModeUnderBtn or not ModeOverBtn then return end
-    local underActive = (rollMode == "UNDER")
-    local overActive  = (rollMode == "OVER")
+    if not UI.ModeUnderBtn or not UI.ModeOverBtn then return end
+    local underActive = (ST.rollMode == "UNDER")
+    local overActive  = (ST.rollMode == "OVER")
 
-    ModeUnderBtn.isPrimary = underActive
-    ModeUnderBtn.customCol = underActive and COLORS.purpleBtn or COLORS.bgPanel
-    ns.StyleBox(ModeUnderBtn, ModeUnderBtn.customCol, underActive and COLORS.purpleBright or COLORS.border)
+    UI.ModeUnderBtn.isPrimary = underActive
+    UI.ModeUnderBtn.customCol = underActive and COLORS.purpleBtn or COLORS.bgPanel
+    ns.StyleBox(UI.ModeUnderBtn, UI.ModeUnderBtn.customCol, underActive and COLORS.purpleBright or COLORS.border)
 
-    ModeOverBtn.isPrimary = overActive
-    ModeOverBtn.customCol = overActive and COLORS.purpleBtn or COLORS.bgPanel
-    ns.StyleBox(ModeOverBtn, ModeOverBtn.customCol, overActive and COLORS.purpleBright or COLORS.border)
+    UI.ModeOverBtn.isPrimary = overActive
+    UI.ModeOverBtn.customCol = overActive and COLORS.purpleBtn or COLORS.bgPanel
+    ns.StyleBox(UI.ModeOverBtn, UI.ModeOverBtn.customCol, overActive and COLORS.purpleBright or COLORS.border)
 end
 
 local function UpdateSliderVisuals()
-    if not TrackInner then return end
-    local frac = targetValue / 100
-    local splitX = frac * TRACK_INNER_W
+    if not UI.TrackInner then return end
+    local frac = ST.targetValue / 100
+    local splitX = frac * CFG.TRACK_INNER_W
 
-    LeftZoneTex:SetWidth(math.max(1, splitX))
-    RightZoneTex:SetWidth(math.max(1, TRACK_INNER_W - splitX))
+    UI.LeftZoneTex:SetWidth(math.max(1, splitX))
+    UI.RightZoneTex:SetWidth(math.max(1, CFG.TRACK_INNER_W - splitX))
 
-    if rollMode == "OVER" then
-        LeftZoneTex:SetColorTexture(unpack(LOSS_ZONE_COLOR))
-        RightZoneTex:SetColorTexture(unpack(WIN_ZONE_COLOR))
+    if ST.rollMode == "OVER" then
+        UI.LeftZoneTex:SetColorTexture(unpack(CFG.LOSS_ZONE_COLOR))
+        UI.RightZoneTex:SetColorTexture(unpack(CFG.WIN_ZONE_COLOR))
     else
-        LeftZoneTex:SetColorTexture(unpack(WIN_ZONE_COLOR))
-        RightZoneTex:SetColorTexture(unpack(LOSS_ZONE_COLOR))
+        UI.LeftZoneTex:SetColorTexture(unpack(CFG.WIN_ZONE_COLOR))
+        UI.RightZoneTex:SetColorTexture(unpack(CFG.LOSS_ZONE_COLOR))
     end
 
-    ThumbFrame:ClearAllPoints()
-    ThumbFrame:SetPoint("CENTER", TrackInner, "LEFT", splitX, 0)
+    UI.ThumbFrame:ClearAllPoints()
+    UI.ThumbFrame:SetPoint("CENTER", UI.TrackInner, "LEFT", splitX, 0)
 end
 
 local function UpdateMetrics()
-    local winChance = GetWinChance(targetValue, rollMode)
+    local winChance = GetWinChance(ST.targetValue, ST.rollMode)
     local mult      = GetMultiplier(winChance)
-    local betAmt    = tonumber(BetInput and BetInput:GetText()) or 0
+    local betAmt    = tonumber(UI.BetInput and UI.BetInput:GetText()) or 0
     if betAmt < 0 then betAmt = 0 end
     local profit    = ComputeProfitOnWin(betAmt, mult)
 
-    if TargetSubText then
-        TargetSubText:SetText(rollMode == "OVER" and "ROLL OVER" or "ROLL UNDER")
+    if UI.TargetSubText then
+        UI.TargetSubText:SetText(ST.rollMode == "OVER" and "ROLL OVER" or "ROLL UNDER")
     end
-    if TargetValText then
-        TargetValText:SetText(tostring(targetValue))
+    if UI.TargetValText then
+        UI.TargetValText:SetText(tostring(ST.targetValue))
     end
-    if WinChanceText then
-        WinChanceText:SetText(string.format("%.2f%%", winChance))
+    if UI.WinChanceText then
+        UI.WinChanceText:SetText(string.format("%.2f%%", winChance))
     end
-    if MultText then
-        MultText:SetText(string.format("%.2fx", mult))
+    if UI.MultText then
+        UI.MultText:SetText(string.format("%.2fx", mult))
     end
-    if ProfitText then
-        ProfitText:SetText(string.format("+%.2f", profit))
+    if UI.ProfitText then
+        UI.ProfitText:SetText(string.format("+%.2f", profit))
     end
-    if RollBtnText then
-        if state == "ROLLING" then
-            RollBtnText:SetText("Rolling...")
+    if UI.RollBtnText then
+        if ST.state == "ROLLING" then
+            UI.RollBtnText:SetText("Rolling...")
         else
-            RollBtnText:SetText(string.format("Roll %s %d", rollMode == "OVER" and "Over" or "Under", targetValue))
+            UI.RollBtnText:SetText(string.format("Roll %s %d", ST.rollMode == "OVER" and "Over" or "Under", ST.targetValue))
         end
     end
 
-    for i = 1, #PRESETS do
-        local pBtn = PresetButtons[i]
+    for i = 1, #CFG.PRESETS do
+        local pBtn = UI.PresetButtons[i]
         if pBtn then
-            local active = (winChance == PRESETS[i])
+            local active = (winChance == CFG.PRESETS[i])
             pBtn.isPrimary = active
             pBtn.customCol = active and COLORS.purpleBtn or COLORS.bgInput
             ns.StyleBox(pBtn, pBtn.customCol, active and COLORS.purpleBright or COLORS.border)
@@ -235,89 +263,89 @@ end
 
 local function ApplyMarkerColors(isWin)
     if isWin then
-        BigRollText:SetTextColor(0.86, 0.72, 1.00, 1.00)
-        if ResultMarker then
-            ResultLine:SetColorTexture(0.86, 0.72, 1.00, 1.00)
-            ResultStem:SetColorTexture(0.86, 0.72, 1.00, 1.00)
-            ns.StyleBox(ResultPill, COLORS.purpleBtn, COLORS.textLight)
-            ResultPillText:SetTextColor(1, 1, 1, 1)
+        UI.BigRollText:SetTextColor(0.86, 0.72, 1.00, 1.00)
+        if UI.ResultMarker then
+            UI.ResultLine:SetColorTexture(0.86, 0.72, 1.00, 1.00)
+            UI.ResultStem:SetColorTexture(0.86, 0.72, 1.00, 1.00)
+            ns.StyleBox(UI.ResultPill, COLORS.purpleBtn, COLORS.textLight)
+            UI.ResultPillText:SetTextColor(1, 1, 1, 1)
         end
     else
-        BigRollText:SetTextColor(unpack(COLORS.crashRed))
-        if ResultMarker then
-            ResultLine:SetColorTexture(unpack(COLORS.crashRed))
-            ResultStem:SetColorTexture(unpack(COLORS.crashRed))
-            ns.StyleBox(ResultPill, COLORS.crashRedDim, COLORS.crashRed)
-            ResultPillText:SetTextColor(1, 0.85, 0.88, 1)
+        UI.BigRollText:SetTextColor(unpack(COLORS.crashRed))
+        if UI.ResultMarker then
+            UI.ResultLine:SetColorTexture(unpack(COLORS.crashRed))
+            UI.ResultStem:SetColorTexture(unpack(COLORS.crashRed))
+            ns.StyleBox(UI.ResultPill, COLORS.crashRedDim, COLORS.crashRed)
+            UI.ResultPillText:SetTextColor(1, 0.85, 0.88, 1)
         end
     end
 end
 
 local function RenderScrubFrame(posVal, tgt, mode)
-    if not BigRollText then return end
+    if not UI.BigRollText then return end
     local shownVal = math.floor(math.max(0, math.min(100, posVal)) * 100 + 0.5) / 100
     local isWinningPos = (mode == "UNDER") and (shownVal < tgt) or (shownVal > tgt)
 
-    BigRollText:SetText(string.format("%.2f", shownVal))
+    UI.BigRollText:SetText(string.format("%.2f", shownVal))
     ApplyMarkerColors(isWinningPos)
 
-    if ResultMarker then
-        ResultMarker:Show()
-        ResultPillText:SetText(string.format("%.2f", shownVal))
+    if UI.ResultMarker then
+        UI.ResultMarker:Show()
+        UI.ResultPillText:SetText(string.format("%.2f", shownVal))
         PositionResultMarker(posVal)
     end
 end
 
 local function UpdateResultDisplay()
-    if not BigRollText or not SubStatusText then return end
-    if state == "ROLLING" and pendingRoll then
-        SubStatusText:SetText("|cff9d4eddROLLING...|r")
-        RenderScrubFrame(markerDisplayVal, pendingRoll.target, pendingRoll.mode)
+    if not UI.BigRollText or not UI.SubStatusText then return end
+    if ST.state == "ROLLING" and ST.pendingRoll then
+        UI.SubStatusText:SetText("|cff9d4eddROLLING...|r")
+        RenderScrubFrame(ST.markerDisplayVal, ST.pendingRoll.target, ST.pendingRoll.mode)
         return
     end
 
-    SubStatusText:SetText(statusBannerText)
+    UI.SubStatusText:SetText(ST.statusBannerText)
 
-    if lastRoll == nil then
-        BigRollText:SetTextColor(unpack(COLORS.textMuted))
-        BigRollText:SetText("--.--")
-        if ResultMarker then ResultMarker:Hide() end
+    if ST.lastRoll == nil then
+        UI.BigRollText:SetTextColor(unpack(COLORS.textMuted))
+        UI.BigRollText:SetText("--.--")
+        if UI.ResultMarker then UI.ResultMarker:Hide() end
         return
     end
 
-    BigRollText:SetText(string.format("%.2f", lastRoll))
-    ApplyMarkerColors(lastWon)
+    UI.BigRollText:SetText(string.format("%.2f", ST.lastRoll))
+    ApplyMarkerColors(ST.lastWon)
 
-    if ResultMarker then
-        ResultMarker:Show()
-        ResultPillText:SetText(string.format("%.2f", lastRoll))
-        PositionResultMarker(lastRoll)
+    if UI.ResultMarker then
+        UI.ResultMarker:Show()
+        UI.ResultPillText:SetText(string.format("%.2f", ST.lastRoll))
+        PositionResultMarker(ST.lastRoll)
     end
 end
 
 local function SetTargetValue(newTarget)
-    if state == "ROLLING" then return end
-    targetValue = ClampTarget(newTarget)
+    if ST.state == "ROLLING" then return end
+    ST.targetValue = ClampTarget(newTarget)
     UpdateSliderVisuals()
     UpdateMetrics()
 end
 
 local function SetRollMode(newMode)
-    if state == "ROLLING" then return end
+    if ST.state == "ROLLING" then return end
     if newMode ~= "OVER" and newMode ~= "UNDER" then return end
-    if rollMode == newMode then return end
-    rollMode = newMode
+    if ST.rollMode == newMode then return end
+    ST.rollMode = newMode
     UpdateModeButtons()
     UpdateSliderVisuals()
     UpdateMetrics()
 end
 
 local function UpdateTargetFromCursor()
-    if not TrackInner then return end
-    local left  = TrackInner:GetLeft()
-    local width = TrackInner:GetWidth()
+    if not UI.TrackInner then return end
+    local left  = UI.TrackInner:GetLeft()
+    local width = UI.TrackInner:GetWidth()
     if not left or not width or width <= 0 then return end
-    local scale   = TrackInner:GetEffectiveScale() or 1
+    local scale   = UI.TrackInner:GetEffectiveScale() or 1
     local cursorX = GetCursorPosition() / scale
     local rel     = (cursorX - left) / width
     if rel < 0 then rel = 0 elseif rel > 1 then rel = 1 end
@@ -329,14 +357,14 @@ end
 -- ============================================================================
 local function SettleRoll(data)
     if not data then return end
-    state            = "IDLE"
-    pendingRoll      = nil
-    lastRoll         = data.roll
-    lastWon          = data.won
-    lastTarget       = data.target
-    lastMode         = data.mode
-    markerDisplayVal = data.roll
-    currentRoundHash = data.hash
+    ST.state            = "IDLE"
+    ST.pendingRoll      = nil
+    ST.lastRoll         = data.roll
+    ST.lastWon          = data.won
+    ST.lastTarget       = data.target
+    ST.lastMode         = data.mode
+    ST.markerDisplayVal = data.roll
+    ST.currentRoundHash = data.hash
 
     ns.SetHashText("Roll SHA-Seed: " .. string.sub(data.hash, 1, 24) .. "...")
 
@@ -357,7 +385,7 @@ local function SettleRoll(data)
         })
         LogHiLoTicker(data.roll, true)
 
-        statusBannerText = string.format("|cffd8b4feWIN!|r  |cff9d4edd+%.2f Credits|r  |cff888899(%.2fx)|r", netProfit, data.mult)
+        ST.statusBannerText = string.format("|cffd8b4feWIN!|r  |cff9d4edd+%.2f Credits|r  |cff888899(%.2fx)|r", netProfit, data.mult)
         ns.RecordGameOutcome("HILO", true, data.bet, data.mult, netProfit, data.shortHash)
         if PlaySound and SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON then
             PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
@@ -376,7 +404,7 @@ local function SettleRoll(data)
         LogHiLoTicker(data.roll, false)
 
         local opSym = (data.mode == "OVER") and ">" or "<"
-        statusBannerText = string.format("|cffe63946MISS|r  |cff888899(-%.2f • Needed %s %d)|r", data.bet, opSym, data.target)
+        ST.statusBannerText = string.format("|cffe63946MISS|r  |cff888899(-%.2f • Needed %s %d)|r", data.bet, opSym, data.target)
         ns.RecordGameOutcome("HILO", false, data.bet, data.mult, 0, data.shortHash)
     end
 
@@ -384,40 +412,40 @@ local function SettleRoll(data)
 end
 
 local function ExecuteRoll()
-    if state == "ROLLING" or not BetInput then return end
-    BetInput:ClearFocus()
-    isDragging = false
+    if ST.state == "ROLLING" or not UI.BetInput then return end
+    UI.BetInput:ClearFocus()
+    ST.isDragging = false
 
-    local ok, actualBet = ns.DeductCredits(BetInput:GetText())
+    local ok, actualBet = ns.DeductCredits(UI.BetInput:GetText())
     if not ok then
         if ns.db and (ns.db.credits or 0) >= 0.01 then
-            statusBannerText = "|cffe63946Enter a valid bet amount|r"
-            SubStatusText:SetText(statusBannerText)
+            ST.statusBannerText = "|cffe63946Enter a valid bet amount|r"
+            UI.SubStatusText:SetText(ST.statusBannerText)
         end
         return
     end
-    BetInput:SetText(string.format("%.2f", actualBet))
+    UI.BetInput:SetText(string.format("%.2f", actualBet))
 
-    local winChance = GetWinChance(targetValue, rollMode)
+    local winChance = GetWinChance(ST.targetValue, ST.rollMode)
     local mult      = GetMultiplier(winChance)
 
     -- Uniform 10,000-outcome roll matching exact winChance / 100 probability
     local raw = math.floor(ns.NextRandomFloat() * 10000)
     local roll, won
-    if rollMode == "UNDER" then
+    if ST.rollMode == "UNDER" then
         roll = raw / 100 -- 0.00 .. 99.99
-        won  = (roll < targetValue)
+        won  = (roll < ST.targetValue)
     else
         roll = (raw + 1) / 100 -- 0.01 .. 100.00
-        won  = (roll > targetValue)
+        won  = (roll > ST.targetValue)
     end
 
     local roundHash = ns.GenerateRoundHash(roll * 100 + actualBet)
     local rollData = {
         roll      = roll,
         won       = won,
-        target    = targetValue,
-        mode      = rollMode,
+        target    = ST.targetValue,
+        mode      = ST.rollMode,
         bet       = actualBet,
         mult      = mult,
         hash      = roundHash,
@@ -425,43 +453,43 @@ local function ExecuteRoll()
         player    = ns.FormatPlayerName(ns.GetMyFormattedName()),
     }
 
-    if instantRollEnabled then
+    if ST.instantRollEnabled then
         -- Bypass deferred reveal and settle immediately
         SettleRoll(rollData)
         return
     end
 
-    state            = "ROLLING"
-    pendingRoll      = rollData
-    scrubStartU      = (lastRoll ~= nil) and lastRoll or targetValue
-    scrubEndU        = ComputeScrubEndU(scrubStartU, roll)
-    markerDisplayVal = scrubStartU
-    animTimer        = 0
+    ST.state            = "ROLLING"
+    ST.pendingRoll      = rollData
+    ST.scrubStartU      = (ST.lastRoll ~= nil) and ST.lastRoll or ST.targetValue
+    ST.scrubEndU        = ComputeScrubEndU(ST.scrubStartU, roll)
+    ST.markerDisplayVal = ST.scrubStartU
+    ST.animTimer        = 0
 
     ns.SetHashText("Roll SHA-Seed: Rolling...")
     ns.RefreshHub()
 end
 
 local function OnUpdateTick(self, elapsed)
-    if isDragging and state ~= "ROLLING" then
+    if ST.isDragging and ST.state ~= "ROLLING" then
         if IsMouseButtonDown("LeftButton") then
             UpdateTargetFromCursor()
         else
-            isDragging = false
+            ST.isDragging = false
         end
     end
 
-    if state == "ROLLING" and pendingRoll then
-        animTimer = animTimer + elapsed
-        local t = animTimer / ROLL_ANIM_DURATION
+    if ST.state == "ROLLING" and ST.pendingRoll then
+        ST.animTimer = ST.animTimer + elapsed
+        local t = ST.animTimer / CFG.ROLL_ANIM_DURATION
         if t >= 1 then
-            SettleRoll(pendingRoll)
+            SettleRoll(ST.pendingRoll)
         else
             -- Smooth cubic ease-out deceleration across sweeps onto final roll
             local inv   = 1 - t
             local eased = 1 - (inv * inv * inv)
-            markerDisplayVal = FoldTo0100(scrubStartU + (scrubEndU - scrubStartU) * eased)
-            RenderScrubFrame(markerDisplayVal, pendingRoll.target, pendingRoll.mode)
+            ST.markerDisplayVal = FoldTo0100(ST.scrubStartU + (ST.scrubEndU - ST.scrubStartU) * eased)
+            RenderScrubFrame(ST.markerDisplayVal, ST.pendingRoll.target, ST.pendingRoll.mode)
         end
     end
 end
@@ -470,39 +498,39 @@ end
 -- Module Interface Methods
 -- ============================================================================
 function HiLo:IsBusy()
-    return state == "ROLLING"
+    return ST.state == "ROLLING"
 end
 
 function HiLo:Refresh()
     local db = ns.db
-    if not HiLoFrame or not db then return end
+    if not UI.HiLoFrame or not db then return end
     db.hiloHistory     = db.hiloHistory or {}
     db.hiloPersonalLog = db.hiloPersonalLog or {}
 
-    local isIdle = (state ~= "ROLLING")
-    SetButtonEnabled(RollBtn, isIdle)
-    SetButtonEnabled(BtnHalf, isIdle)
-    SetButtonEnabled(Btn2x, isIdle)
-    SetButtonEnabled(BtnMax, isIdle)
-    SetButtonEnabled(ModeUnderBtn, isIdle)
-    SetButtonEnabled(ModeOverBtn, isIdle)
-    SetButtonEnabled(MinusBtn, isIdle)
-    SetButtonEnabled(PlusBtn, isIdle)
-    for i = 1, #PRESETS do
-        SetButtonEnabled(PresetButtons[i], isIdle)
+    local isIdle = (ST.state ~= "ROLLING")
+    SetButtonEnabled(UI.RollBtn, isIdle)
+    SetButtonEnabled(UI.BtnHalf, isIdle)
+    SetButtonEnabled(UI.Btn2x, isIdle)
+    SetButtonEnabled(UI.BtnMax, isIdle)
+    SetButtonEnabled(UI.ModeUnderBtn, isIdle)
+    SetButtonEnabled(UI.ModeOverBtn, isIdle)
+    SetButtonEnabled(UI.MinusBtn, isIdle)
+    SetButtonEnabled(UI.PlusBtn, isIdle)
+    for i = 1, #CFG.PRESETS do
+        SetButtonEnabled(UI.PresetButtons[i], isIdle)
     end
-    if BetInput then
+    if UI.BetInput then
         if isIdle then
-            BetInput:Enable()
+            UI.BetInput:Enable()
         else
-            BetInput:ClearFocus()
-            BetInput:Disable()
+            UI.BetInput:ClearFocus()
+            UI.BetInput:Disable()
         end
     end
 
     -- Top Ticker Pills
-    for i = 1, NUM_TICKER_PILLS do
-        local pill = TickerPills[i]
+    for i = 1, CFG.NUM_TICKER_PILLS do
+        local pill = UI.TickerPills[i]
         local item = db.hiloHistory[i]
         if item then
             pill:Show()
@@ -521,8 +549,8 @@ function HiLo:Refresh()
 
     -- Left Sidebar Recent Rolls History (formatted with ns.FormatPlayerName)
     local fallbackPlayer = ns.FormatPlayerName(ns.GetMyFormattedName())
-    for i = 1, NUM_HISTORY_ROWS do
-        local row   = PersonalRows[i]
+    for i = 1, CFG.NUM_HISTORY_ROWS do
+        local row   = UI.PersonalRows[i]
         local entry = db.hiloPersonalLog[i]
         if entry then
             row:Show()
@@ -548,10 +576,10 @@ function HiLo:Refresh()
 end
 
 function HiLo:OnShow()
-    if state == "ROLLING" then
+    if ST.state == "ROLLING" then
         ns.SetHashText("Roll SHA-Seed: Rolling...")
-    elseif currentRoundHash ~= "" then
-        ns.SetHashText("Roll SHA-Seed: " .. string.sub(currentRoundHash, 1, 24) .. "...")
+    elseif ST.currentRoundHash ~= "" then
+        ns.SetHashText("Roll SHA-Seed: " .. string.sub(ST.currentRoundHash, 1, 24) .. "...")
     else
         ns.SetHashText("Hi-Lo — 0-100 Slider | 1% House Edge")
     end
@@ -559,26 +587,26 @@ function HiLo:OnShow()
 end
 
 function HiLo:OnHide()
-    isDragging = false
-    if state == "ROLLING" and pendingRoll then
-        SettleRoll(pendingRoll)
+    ST.isDragging = false
+    if ST.state == "ROLLING" and ST.pendingRoll then
+        SettleRoll(ST.pendingRoll)
     end
 end
 
 function HiLo:Build(parent)
-    HiLoFrame = CreateFrame("Frame", "VoidCasinoHiLoFrame", parent)
-    HiLoFrame:SetAllPoints()
+    UI.HiLoFrame = CreateFrame("Frame", "VoidCasinoHiLoFrame", parent)
+    UI.HiLoFrame:SetAllPoints()
 
     -- 1. Left Controls Panel (230 x 340)
-    local LeftPanel = CreateFrame("Frame", nil, HiLoFrame)
+    local LeftPanel = CreateFrame("Frame", nil, UI.HiLoFrame)
     LeftPanel:SetPoint("TOPLEFT", 0, 0)
     LeftPanel:SetSize(230, 340)
     ns.StyleBox(LeftPanel, COLORS.bgPanel, COLORS.border)
 
-    RollBtn = ns.CreateCustomButton(LeftPanel, 206, 42, "Roll Over 50", true)
-    RollBtn:SetPoint("TOP", 0, -12)
-    RollBtnText = RollBtn.label
-    RollBtn:SetScript("OnClick", ExecuteRoll)
+    UI.RollBtn = ns.CreateCustomButton(LeftPanel, 206, 42, "Roll Over 50", true)
+    UI.RollBtn:SetPoint("TOP", 0, -12)
+    UI.RollBtnText = UI.RollBtn.label
+    UI.RollBtn:SetScript("OnClick", ExecuteRoll)
 
     local BetLbl = LeftPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     BetLbl:SetPoint("TOPLEFT", 12, -62)
@@ -590,29 +618,29 @@ function HiLo:Build(parent)
     BetBox:SetPoint("TOPLEFT", 12, -76)
     ns.StyleBox(BetBox, COLORS.bgInput, COLORS.border)
 
-    BetInput = CreateFrame("EditBox", nil, BetBox)
-    BetInput:SetSize(96, 26)
-    BetInput:SetPoint("LEFT", 8, 0)
-    BetInput:SetFontObject("GameFontHighlight")
-    BetInput:SetAutoFocus(false)
-    BetInput:SetText("100")
-    BetInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    BetInput:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    BetInput:SetScript("OnTextChanged", function() UpdateMetrics() end)
+    UI.BetInput = CreateFrame("EditBox", nil, BetBox)
+    UI.BetInput:SetSize(96, 26)
+    UI.BetInput:SetPoint("LEFT", 8, 0)
+    UI.BetInput:SetFontObject("GameFontHighlight")
+    UI.BetInput:SetAutoFocus(false)
+    UI.BetInput:SetText("100")
+    UI.BetInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    UI.BetInput:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    UI.BetInput:SetScript("OnTextChanged", function() UpdateMetrics() end)
 
-    BtnMax = ns.CreateCustomButton(BetBox, 36, 24, "Max", false)
-    BtnMax:SetPoint("RIGHT", -3, 0)
-    BtnMax:SetScript("OnClick", function()
+    UI.BtnMax = ns.CreateCustomButton(BetBox, 36, 24, "Max", false)
+    UI.BtnMax:SetPoint("RIGHT", -3, 0)
+    UI.BtnMax:SetScript("OnClick", function()
         ns.CheckBankrollRefill()
         local bal = (ns.db and ns.db.credits) or 0
-        BetInput:SetText(string.format("%.2f", math.max(0, bal)))
+        UI.BetInput:SetText(string.format("%.2f", math.max(0, bal)))
         UpdateMetrics()
     end)
 
-    Btn2x = ns.CreateCustomButton(BetBox, 32, 24, "2x", false)
-    Btn2x:SetPoint("RIGHT", BtnMax, "LEFT", -3, 0)
-    Btn2x:SetScript("OnClick", function()
-        local cur     = tonumber(BetInput:GetText()) or 0
+    UI.Btn2x = ns.CreateCustomButton(BetBox, 32, 24, "2x", false)
+    UI.Btn2x:SetPoint("RIGHT", UI.BtnMax, "LEFT", -3, 0)
+    UI.Btn2x:SetScript("OnClick", function()
+        local cur     = tonumber(UI.BetInput:GetText()) or 0
         local bal     = (ns.db and ns.db.credits) or 0
         local nextVal = math.min(bal, cur * 2)
         if bal >= 1 then
@@ -620,14 +648,14 @@ function HiLo:Build(parent)
         else
             nextVal = math.max(0, math.floor(nextVal * 100) / 100)
         end
-        BetInput:SetText(string.format("%.2f", nextVal))
+        UI.BetInput:SetText(string.format("%.2f", nextVal))
         UpdateMetrics()
     end)
 
-    BtnHalf = ns.CreateCustomButton(BetBox, 32, 24, "1/2", false)
-    BtnHalf:SetPoint("RIGHT", Btn2x, "LEFT", -3, 0)
-    BtnHalf:SetScript("OnClick", function()
-        local cur     = tonumber(BetInput:GetText()) or 0
+    UI.BtnHalf = ns.CreateCustomButton(BetBox, 32, 24, "1/2", false)
+    UI.BtnHalf:SetPoint("RIGHT", UI.Btn2x, "LEFT", -3, 0)
+    UI.BtnHalf:SetScript("OnClick", function()
+        local cur     = tonumber(UI.BetInput:GetText()) or 0
         local bal     = (ns.db and ns.db.credits) or 0
         local nextVal = math.floor((cur / 2) * 100) / 100
         if bal >= 1 then
@@ -635,7 +663,7 @@ function HiLo:Build(parent)
         else
             nextVal = math.max(0.01, math.min(bal, nextVal))
         end
-        BetInput:SetText(string.format("%.2f", nextVal))
+        UI.BetInput:SetText(string.format("%.2f", nextVal))
         UpdateMetrics()
     end)
 
@@ -644,24 +672,24 @@ function HiLo:Build(parent)
     PresetBar:SetSize(206, 24)
     PresetBar:SetPoint("TOPLEFT", 12, -114)
 
-    for i = 1, #PRESETS do
-        local pct = PRESETS[i]
+    for i = 1, #CFG.PRESETS do
+        local pct = CFG.PRESETS[i]
         local pBtn = ns.CreateCustomButton(PresetBar, 48, 22, pct .. "%", false)
         pBtn.label:SetFontObject("GameFontHighlightSmall")
         pBtn:SetPoint("LEFT", (i - 1) * 52 + 1, 0)
         pBtn:SetScript("OnClick", function()
-            local newTgt = (rollMode == "OVER") and (100 - pct) or pct
+            local newTgt = (ST.rollMode == "OVER") and (100 - pct) or pct
             SetTargetValue(newTgt)
         end)
-        PresetButtons[i] = pBtn
+        UI.PresetButtons[i] = pBtn
     end
 
     -- Instant Roll Toggle (bypasses scrubbing animation & deferred reveal)
     local instantContainer
-    instantContainer, InstantSwitch = ns.CreateToggleSwitch(LeftPanel, "Instant Roll", function(val)
-        instantRollEnabled = val
-        if val and state == "ROLLING" and pendingRoll then
-            SettleRoll(pendingRoll)
+    instantContainer, UI.InstantSwitch = ns.CreateToggleSwitch(LeftPanel, "Instant Roll", function(val)
+        ST.instantRollEnabled = val
+        if val and ST.state == "ROLLING" and ST.pendingRoll then
+            SettleRoll(ST.pendingRoll)
         end
     end)
     instantContainer:SetPoint("TOPLEFT", 12, -142)
@@ -671,7 +699,7 @@ function HiLo:Build(parent)
     HistLbl:SetText("Recent Rolls")
     HistLbl:SetTextColor(unpack(COLORS.textMuted))
 
-    for i = 1, NUM_HISTORY_ROWS do
+    for i = 1, CFG.NUM_HISTORY_ROWS do
         local row = CreateFrame("Frame", nil, LeftPanel)
         row:SetSize(206, 24)
         row:SetPoint("TOPLEFT", 12, -192 - (i - 1) * 28)
@@ -688,11 +716,11 @@ function HiLo:Build(parent)
         row.left:SetWordWrap(false)
 
         row:Hide()
-        PersonalRows[i] = row
+        UI.PersonalRows[i] = row
     end
 
     -- 2. Right Slider & Stage Panel (554 x 340)
-    local RightPanel = CreateFrame("Frame", nil, HiLoFrame)
+    local RightPanel = CreateFrame("Frame", nil, UI.HiLoFrame)
     RightPanel:SetPoint("TOPLEFT", LeftPanel, "TOPRIGHT", 12, 0)
     RightPanel:SetPoint("TOPRIGHT", 0, 0)
     RightPanel:SetHeight(340)
@@ -704,7 +732,7 @@ function HiLo:Build(parent)
     TickerBar:SetHeight(22)
     TickerBar:SetClipsChildren(true)
 
-    for i = 1, NUM_TICKER_PILLS do
+    for i = 1, CFG.NUM_TICKER_PILLS do
         local pill = CreateFrame("Frame", nil, TickerBar)
         pill:SetSize(44, 20)
         pill:SetPoint("LEFT", (i - 1) * 48, 0)
@@ -712,7 +740,7 @@ function HiLo:Build(parent)
         pill.text = pill:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         pill.text:SetPoint("CENTER")
         pill:Hide()
-        TickerPills[i] = pill
+        UI.TickerPills[i] = pill
     end
 
     local StageFrame = CreateFrame("Frame", nil, RightPanel)
@@ -735,113 +763,113 @@ function HiLo:Build(parent)
     ModeBar:SetSize(256, 26)
     ModeBar:SetPoint("TOP", 0, -10)
 
-    ModeUnderBtn = ns.CreateCustomButton(ModeBar, 124, 26, "Roll Under", false)
-    ModeUnderBtn:SetPoint("LEFT", 0, 0)
-    ModeUnderBtn:SetScript("OnClick", function() SetRollMode("UNDER") end)
+    UI.ModeUnderBtn = ns.CreateCustomButton(ModeBar, 124, 26, "Roll Under", false)
+    UI.ModeUnderBtn:SetPoint("LEFT", 0, 0)
+    UI.ModeUnderBtn:SetScript("OnClick", function() SetRollMode("UNDER") end)
 
-    ModeOverBtn = ns.CreateCustomButton(ModeBar, 124, 26, "Roll Over", true)
-    ModeOverBtn:SetPoint("RIGHT", 0, 0)
-    ModeOverBtn:SetScript("OnClick", function() SetRollMode("OVER") end)
+    UI.ModeOverBtn = ns.CreateCustomButton(ModeBar, 124, 26, "Roll Over", true)
+    UI.ModeOverBtn:SetPoint("RIGHT", 0, 0)
+    UI.ModeOverBtn:SetScript("OnClick", function() SetRollMode("OVER") end)
 
     -- Center Roll Result Readout
-    BigRollText = StageFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-    BigRollText:SetPoint("TOP", 0, -48)
-    local fontPath, _, fontFlags = BigRollText:GetFont()
+    UI.BigRollText = StageFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    UI.BigRollText:SetPoint("TOP", 0, -48)
+    local fontPath, _, fontFlags = UI.BigRollText:GetFont()
     if fontPath then
-        BigRollText:SetFont(fontPath, 42, fontFlags)
+        UI.BigRollText:SetFont(fontPath, 42, fontFlags)
     end
-    BigRollText:SetText("--.--")
+    UI.BigRollText:SetText("--.--")
 
-    SubStatusText = StageFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    SubStatusText:SetPoint("TOP", BigRollText, "BOTTOM", 0, -4)
-    SubStatusText:SetText("|cff888899Adjust the slider and click Roll|r")
+    UI.SubStatusText = StageFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    UI.SubStatusText:SetPoint("TOP", UI.BigRollText, "BOTTOM", 0, -4)
+    UI.SubStatusText:SetText("|cff888899Adjust the slider and click Roll|r")
 
     -- Interactive 0-100 Slider Track
-    TrackBar = CreateFrame("Frame", nil, StageFrame)
-    TrackBar:SetSize(TRACK_W, TRACK_H)
-    TrackBar:SetPoint("TOP", 0, -148)
-    ns.StyleBox(TrackBar, COLORS.bgMain, COLORS.border)
+    UI.TrackBar = CreateFrame("Frame", nil, StageFrame)
+    UI.TrackBar:SetSize(CFG.TRACK_W, CFG.TRACK_H)
+    UI.TrackBar:SetPoint("TOP", 0, -148)
+    ns.StyleBox(UI.TrackBar, COLORS.bgMain, COLORS.border)
 
-    TrackInner = CreateFrame("Frame", nil, TrackBar)
-    TrackInner:SetPoint("TOPLEFT", 1, -1)
-    TrackInner:SetPoint("BOTTOMRIGHT", -1, 1)
+    UI.TrackInner = CreateFrame("Frame", nil, UI.TrackBar)
+    UI.TrackInner:SetPoint("TOPLEFT", 1, -1)
+    UI.TrackInner:SetPoint("BOTTOMRIGHT", -1, 1)
 
-    LeftZoneTex = TrackInner:CreateTexture(nil, "ARTWORK")
-    LeftZoneTex:SetPoint("TOPLEFT", 0, 0)
-    LeftZoneTex:SetPoint("BOTTOMLEFT", 0, 0)
+    UI.LeftZoneTex = UI.TrackInner:CreateTexture(nil, "ARTWORK")
+    UI.LeftZoneTex:SetPoint("TOPLEFT", 0, 0)
+    UI.LeftZoneTex:SetPoint("BOTTOMLEFT", 0, 0)
 
-    RightZoneTex = TrackInner:CreateTexture(nil, "ARTWORK")
-    RightZoneTex:SetPoint("TOPRIGHT", 0, 0)
-    RightZoneTex:SetPoint("BOTTOMRIGHT", 0, 0)
+    UI.RightZoneTex = UI.TrackInner:CreateTexture(nil, "ARTWORK")
+    UI.RightZoneTex:SetPoint("TOPRIGHT", 0, 0)
+    UI.RightZoneTex:SetPoint("BOTTOMRIGHT", 0, 0)
 
     -- Floating Last-Roll Pointer Marker
-    ResultMarker = CreateFrame("Frame", nil, TrackBar)
-    ResultMarker:SetSize(4, TRACK_H + 2)
-    ResultMarker:SetFrameLevel(TrackBar:GetFrameLevel() + 2)
-    ResultMarker:Hide()
+    UI.ResultMarker = CreateFrame("Frame", nil, UI.TrackBar)
+    UI.ResultMarker:SetSize(4, CFG.TRACK_H + 2)
+    UI.ResultMarker:SetFrameLevel(UI.TrackBar:GetFrameLevel() + 2)
+    UI.ResultMarker:Hide()
 
-    ResultLine = ResultMarker:CreateTexture(nil, "OVERLAY")
-    ResultLine:SetSize(3, TRACK_H + 2)
-    ResultLine:SetPoint("CENTER", 0, 0)
+    UI.ResultLine = UI.ResultMarker:CreateTexture(nil, "OVERLAY")
+    UI.ResultLine:SetSize(3, CFG.TRACK_H + 2)
+    UI.ResultLine:SetPoint("CENTER", 0, 0)
 
-    ResultStem = ResultMarker:CreateTexture(nil, "OVERLAY")
-    ResultStem:SetSize(2, 6)
-    ResultStem:SetPoint("BOTTOM", ResultLine, "TOP", 0, 0)
+    UI.ResultStem = UI.ResultMarker:CreateTexture(nil, "OVERLAY")
+    UI.ResultStem:SetSize(2, 6)
+    UI.ResultStem:SetPoint("BOTTOM", UI.ResultLine, "TOP", 0, 0)
 
-    ResultPill = CreateFrame("Frame", nil, ResultMarker)
-    ResultPill:SetSize(48, 18)
-    ResultPill:SetPoint("BOTTOM", ResultStem, "TOP", 0, 0)
-    ns.StyleBox(ResultPill, COLORS.purpleBtn, COLORS.textLight)
+    UI.ResultPill = CreateFrame("Frame", nil, UI.ResultMarker)
+    UI.ResultPill:SetSize(48, 18)
+    UI.ResultPill:SetPoint("BOTTOM", UI.ResultStem, "TOP", 0, 0)
+    ns.StyleBox(UI.ResultPill, COLORS.purpleBtn, COLORS.textLight)
 
-    ResultPillText = ResultPill:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    ResultPillText:SetPoint("CENTER", 0, 0)
+    UI.ResultPillText = UI.ResultPill:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    UI.ResultPillText:SetPoint("CENTER", 0, 0)
 
     -- Draggable Target Handle Thumb
-    ThumbFrame = CreateFrame("Frame", nil, TrackBar)
-    ThumbFrame:SetSize(16, 28)
-    ThumbFrame:SetFrameLevel(TrackBar:GetFrameLevel() + 4)
-    ns.StyleBox(ThumbFrame, COLORS.purpleBright, COLORS.textLight)
+    UI.ThumbFrame = CreateFrame("Frame", nil, UI.TrackBar)
+    UI.ThumbFrame:SetSize(16, 28)
+    UI.ThumbFrame:SetFrameLevel(UI.TrackBar:GetFrameLevel() + 4)
+    ns.StyleBox(UI.ThumbFrame, COLORS.purpleBright, COLORS.textLight)
 
-    local ThumbGrip = ThumbFrame:CreateTexture(nil, "ARTWORK")
+    local ThumbGrip = UI.ThumbFrame:CreateTexture(nil, "ARTWORK")
     ThumbGrip:SetSize(2, 14)
     ThumbGrip:SetPoint("CENTER", 0, 0)
     ThumbGrip:SetColorTexture(1, 1, 1, 0.9)
 
     -- Mouse Drag & Wheel Hit Area
     local SliderHitArea = CreateFrame("Frame", nil, StageFrame)
-    SliderHitArea:SetSize(TRACK_W + 16, 36)
-    SliderHitArea:SetPoint("CENTER", TrackBar, "CENTER", 0, 0)
-    SliderHitArea:SetFrameLevel(TrackBar:GetFrameLevel() + 6)
+    SliderHitArea:SetSize(CFG.TRACK_W + 16, 36)
+    SliderHitArea:SetPoint("CENTER", UI.TrackBar, "CENTER", 0, 0)
+    SliderHitArea:SetFrameLevel(UI.TrackBar:GetFrameLevel() + 6)
     SliderHitArea:EnableMouse(true)
     SliderHitArea:EnableMouseWheel(true)
 
     SliderHitArea:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and state ~= "ROLLING" then
-            isDragging = true
+        if button == "LeftButton" and ST.state ~= "ROLLING" then
+            ST.isDragging = true
             UpdateTargetFromCursor()
         end
     end)
 
     SliderHitArea:SetScript("OnMouseUp", function(self, button)
         if button == "LeftButton" then
-            isDragging = false
+            ST.isDragging = false
         end
     end)
 
     SliderHitArea:SetScript("OnHide", function()
-        isDragging = false
+        ST.isDragging = false
     end)
 
     SliderHitArea:SetScript("OnMouseWheel", function(self, delta)
-        if state ~= "ROLLING" then
-            SetTargetValue(targetValue + (delta > 0 and 1 or -1))
+        if ST.state ~= "ROLLING" then
+            SetTargetValue(ST.targetValue + (delta > 0 and 1 or -1))
         end
     end)
 
     -- Scale Labels (0, 25, 50, 75, 100)
-    for _, tick in ipairs(SCALE_TICKS) do
+    for _, tick in ipairs(CFG.SCALE_TICKS) do
         local lbl = StageFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        lbl:SetPoint("TOP", TrackInner, "BOTTOMLEFT", (tick / 100) * TRACK_INNER_W, -10)
+        lbl:SetPoint("TOP", UI.TrackInner, "BOTTOMLEFT", (tick / 100) * CFG.TRACK_INNER_W, -10)
         lbl:SetTextColor(unpack(COLORS.textMuted))
         lbl:SetText(tostring(tick))
     end
@@ -868,35 +896,35 @@ function HiLo:Build(parent)
     end
 
     local targetCard
-    targetCard, TargetSubText, TargetValText = CreateStatCard(1, "ROLL OVER")
+    targetCard, UI.TargetSubText, UI.TargetValText = CreateStatCard(1, "ROLL OVER")
 
-    MinusBtn = ns.CreateCustomButton(targetCard, 20, 20, "-", false)
-    MinusBtn:SetPoint("BOTTOMLEFT", 6, 8)
-    MinusBtn:SetScript("OnClick", function() SetTargetValue(targetValue - 1) end)
+    UI.MinusBtn = ns.CreateCustomButton(targetCard, 20, 20, "-", false)
+    UI.MinusBtn:SetPoint("BOTTOMLEFT", 6, 8)
+    UI.MinusBtn:SetScript("OnClick", function() SetTargetValue(ST.targetValue - 1) end)
 
-    PlusBtn = ns.CreateCustomButton(targetCard, 20, 20, "+", false)
-    PlusBtn:SetPoint("BOTTOMRIGHT", -6, 8)
-    PlusBtn:SetScript("OnClick", function() SetTargetValue(targetValue + 1) end)
+    UI.PlusBtn = ns.CreateCustomButton(targetCard, 20, 20, "+", false)
+    UI.PlusBtn:SetPoint("BOTTOMRIGHT", -6, 8)
+    UI.PlusBtn:SetScript("OnClick", function() SetTargetValue(ST.targetValue + 1) end)
 
     local _, _, wcVal = CreateStatCard(2, "WIN CHANCE")
-    WinChanceText = wcVal
+    UI.WinChanceText = wcVal
 
     local _, _, mVal = CreateStatCard(3, "MULTIPLIER")
-    MultText = mVal
-    MultText:SetTextColor(0.86, 0.72, 1.00, 1.00)
+    UI.MultText = mVal
+    UI.MultText:SetTextColor(0.86, 0.72, 1.00, 1.00)
 
     local _, _, pVal = CreateStatCard(4, "PROFIT ON WIN")
-    ProfitText = pVal
-    ProfitText:SetTextColor(unpack(COLORS.purpleBright))
+    UI.ProfitText = pVal
+    UI.ProfitText:SetTextColor(unpack(COLORS.purpleBright))
 
-    HiLoFrame:SetScript("OnUpdate", OnUpdateTick)
-    HiLoFrame:SetScript("OnHide", function() HiLo:OnHide() end)
+    UI.HiLoFrame:SetScript("OnUpdate", OnUpdateTick)
+    UI.HiLoFrame:SetScript("OnHide", function() HiLo:OnHide() end)
     UpdateModeButtons()
     UpdateSliderVisuals()
     UpdateMetrics()
     UpdateResultDisplay()
 
-    return HiLoFrame
+    return UI.HiLoFrame
 end
 
 ns.RegisterGame("HILO", HiLo)

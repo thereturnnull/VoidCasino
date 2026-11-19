@@ -594,6 +594,10 @@ local function UpdateTableVisuals()
             ns.StyleBox(pBtn, pBtn.customCol, active and COLORS.purpleBright or COLORS.border)
         end
     end
+
+    local canModifyBets = (ST.state ~= "SPINNING") and (total >= 0.01)
+    SetButtonEnabled(UI.ClearBtn, canModifyBets)
+    SetButtonEnabled(UI.DoubleBetsBtn, canModifyBets)
 end
 
 local function ModifySpotBet(spotId, mouseButton)
@@ -890,9 +894,7 @@ function Roulette:Refresh()
     SetButtonEnabled(UI.BtnHalf, isIdle)
     SetButtonEnabled(UI.Btn2x, isIdle)
     SetButtonEnabled(UI.BtnMax, isIdle)
-    SetButtonEnabled(UI.ClearBtn, isIdle)
     SetButtonEnabled(UI.RebetBtn, isIdle and (next(ST.lastRoundBets) ~= nil))
-    SetButtonEnabled(UI.DoubleBetsBtn, isIdle)
     for i = 1, #CFG.CHIP_PRESETS do
         SetButtonEnabled(UI.PresetButtons[i], isIdle)
     end
@@ -1251,11 +1253,23 @@ function Roulette:Build(parent)
         end
         btn.chipText:SetTextColor(0.86, 0.72, 1.00, 1.00)
 
+        local function RefreshSpotHover()
+            if not UI.HoverInfoText then return end
+            local placed = ST.stagedBets[spotId] or 0
+            if placed > 0 then
+                UI.HoverInfoText:SetText(string.format("|cffffffff%s|r  |cffd8b4fe(Bet: %.2f)|r", descText, placed))
+            else
+                UI.HoverInfoText:SetText(string.format("|cffffffff%s|r", descText))
+            end
+        end
+
         btn:SetScript("OnClick", function(self, mouseButton)
             ModifySpotBet(spotId, mouseButton)
+            RefreshSpotHover()
         end)
 
         btn:SetScript("OnEnter", function(self)
+            if self.IsEnabled and not self:IsEnabled() then return end
             local highlight = {
                 math.min(1, self.baseBg[1] + 0.12),
                 math.min(1, self.baseBg[2] + 0.10),
@@ -1263,14 +1277,7 @@ function Roulette:Build(parent)
                 1.00
             }
             self.bgTex:SetColorTexture(unpack(highlight))
-            if UI.HoverInfoText then
-                local placed = ST.stagedBets[spotId] or 0
-                if placed > 0 then
-                    UI.HoverInfoText:SetText(string.format("|cffffffff%s|r  |cffd8b4fe(Bet: %.2f)|r", descText, placed))
-                else
-                    UI.HoverInfoText:SetText(string.format("|cffffffff%s|r", descText))
-                end
-            end
+            RefreshSpotHover()
         end)
 
         btn:SetScript("OnLeave", function(self)

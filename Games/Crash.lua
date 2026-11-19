@@ -75,12 +75,14 @@ local function TriggerCashout(targetMult)
     cashedOut = true
     cashoutMult = targetMult or currentMultiplier
     local payout = math.floor(activeBet * cashoutMult * 100) / 100
-    local netWin = payout - activeBet
+    local netWin = math.floor((payout - activeBet) * 100 + 0.5) / 100
 
     ns.AddCredits(payout)
     LogCrashPersonal(true, activeBet, cashoutMult, netWin)
     ns.RecordGameOutcome("Crash", true, activeBet, cashoutMult, netWin, string.sub(currentRoundHash, 1, 16))
-    PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+    if PlaySound and SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON then
+        PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+    end
 end
 
 local function LockInBet()
