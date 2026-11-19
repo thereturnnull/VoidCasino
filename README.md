@@ -1,6 +1,6 @@
 # VoidCasino
 
-VoidCasino is a modular, dark-obsidian and neon-purple casino hub addon for **WoW: Forever** (Interface `16001`). Designed for casual downtime with friends and guildmates, it brings multiple tabletop and arcade-style casino games together inside a single in-game window backed by a shared simulated bankroll and real-time guild leaderboards.
+VoidCasino is a dark-obsidian and neon-purple casino hub addon for **WoW: Forever**. Designed for casual downtime with friends and guildmates, it brings multiple tabletop and arcade-style casino games together inside a single in-game window backed by a shared simulated bankroll and real-time guild leaderboards.
 
 ## What's Inside
 * **Unified Hub & Guild Sync:** Track your simulated credit balance, session P/L, and automatic 1-hour empty-balance refills alongside a live cross-game round feed and a pop-out Guild Leaderboard drawer.
